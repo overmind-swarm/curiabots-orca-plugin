@@ -127,6 +127,25 @@ test('past 500 events the outbox keeps the last status of each job and never dro
   assert.ok(events.some((e) => e.event.kind === 'job.gone'))
   assert.ok(events.some((e) => e.event.kind === 'job.status' && e.event.state === 'failed'))
   assert.equal(events.at(-1)!.seq, 1202)
+  // a server that never acks while jobs keep ending: terminal events are bounded too, without output
+  for (let i = 0; i < 2600; i++) store.enqueue('link-a', { ...status_('end' + i, 'stopped'), excerpt: 'secret output' })
+  events = store.outbox('link-a').events
+  assert.equal(events.length, 2000)
+  assert.equal(events.some((e) => e.event.kind === 'job.status' && e.event.excerpt !== undefined), false, 'no stored output past the cap')
+})
+
+test('failed starts do not pile up in storage', async () => {
+  h = await setup()
+  await h.link('link-a', TOKEN)
+  await h.allow('link-a')
+  h.host.handlers['workspace.create'] = () => {
+    throw Object.assign(new Error('bad base'), { code: 'action_failed' })
+  }
+  for (let i = 0; i < 230; i++) {
+    const r = await h.skill.command('link-a', 'start_job', { ...start, job_id: 'f' + String(i).padStart(10, '0') })
+    assert.equal(r.error.code, 'internal')
+  }
+  assert.ok(Object.keys(h.plugin.store.jobsOf('link-a')).length <= 200)
 })
 
 test('jobs survive a restart: the terminal still maps to its job and the link', async () => {
