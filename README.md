@@ -53,6 +53,7 @@ Press **Unlink** (twice, to confirm) in the panel. The token is deleted, the ski
 
 - With an OS key store (`os-keyring`) the token is kept in Orca's encrypted secrets, always.
 - **Without one** (typical for `orca serve` on a server with no desktop: Linux without gnome-keyring/libsecret or KWallet) the panel **refuses to link** and explains how to enable a keyring. Install and unlock one, then restart Orca.
+- Notices waiting for the service's acknowledgement (an outbox of at most 500 per link, with the last lines of agent output) sit in the plugin's private storage until acknowledged.
 - Advanced and at your own risk: the setting **Allow token without keyring** stores the token in the plugin's plain private storage instead. The panel and the status bar then show a permanent warning *token stored without a keyring*.
 
 ## Settings
@@ -175,6 +176,7 @@ Pulsa **Desvincular** (dos veces, para confirmar) en el panel. Se borra el token
 
 - Con almacén de claves (`os-keyring`) el token va siempre a los secretos cifrados de Orca.
 - **Sin él** (típico de `orca serve` en un servidor sin escritorio: Linux sin gnome-keyring/libsecret ni KWallet) el panel **se niega a vincular** y explica cómo habilitar un llavero. Instala y desbloquea uno y reinicia Orca.
+- Los avisos pendientes de confirmación del servicio (una cola de 500 como máximo por vinculación, con las últimas líneas de salida del agente) permanecen en el almacén privado del plugin hasta que se confirman.
 - Avanzado y bajo tu responsabilidad: el ajuste **Allow token without keyring** guarda el token en el almacén privado del plugin, sin cifrar. El panel y la barra de estado muestran entonces un aviso permanente *token stored without a keyring*.
 
 ### Ajustes

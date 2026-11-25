@@ -8,6 +8,8 @@ import type { JobEvent, OrcaState, ProjectRef } from './wire.ts'
 
 export const MAX_OUTBOX = 500
 export const MAX_CLOSED_JOBS = 200
+/** Terminal events are never dropped for being old, only past this absolute bound (a server that never acks). */
+export const HARD_MAX_OUTBOX = 2000
 
 export interface AllowedProject {
   id: string
@@ -143,6 +145,7 @@ export class Store {
   }
 
   saveJobs(linkId: string): Promise<void> {
+    this.pruneJobs(linkId) // closed and failed records are bounded however they came to be
     return this.persist(`jobs:${linkId}`, () => this.jobsOf(linkId))
   }
 
@@ -214,6 +217,11 @@ export function compactOutbox(box: OutboxData): void {
       }
       return true
     })
+  }
+  if (box.events.length > MAX_OUTBOX) {
+    // Only terminal events are left: they keep their state but no longer hold terminal output.
+    for (const e of box.events) if (e.event.kind === 'job.status') delete e.event.excerpt
+    if (box.events.length > HARD_MAX_OUTBOX) box.events.splice(0, box.events.length - HARD_MAX_OUTBOX)
   }
 }
 
