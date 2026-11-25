@@ -1,0 +1,66 @@
+{
+  "manifestVersion": 2,
+  "id": "curiabots",
+  "name": "CuriaBots",
+  "version": "0.1.0",
+  "description": "Connects Orca to a CuriaBots agent: send issues to Orca and follow what its agents do.",
+  "author": { "name": "Overmind Swarm", "url": "https://github.com/overmind-swarm" },
+  "repository": "https://github.com/overmind-swarm/curiabots-orca-plugin",
+  "homepage": "https://curiabots.com",
+  "license": "MIT",
+  "engines": { "orca": ">=1.4.259" },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "curiabots",
+        "title": "CuriaBots",
+        "icon": "link",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "events": [{ "on": "agent.status.changed" }, { "on": "workspace.removed" }],
+    "statusBarItems": [
+      { "id": "curiabots", "text": "CuriaBots", "icon": "plug", "tooltip": "CuriaBots connector" }
+    ],
+    "settings": [
+      {
+        "key": "serviceUrl",
+        "title": "Service URL",
+        "description": "Base URL of the CuriaBots Orca service. Only change it to test against another server. Applies to links made after the change.",
+        "type": "string",
+        "default": "https://api.curiabots.com/skills/orca",
+        "maxLength": 200
+      },
+      {
+        "key": "orcaCliPath",
+        "title": "Orca CLI path (optional)",
+        "description": "Absolute path of the Orca CLI, used only to reply to agents. Leave empty to detect it. On Linux the 'orca' in PATH may be the GNOME screen reader.",
+        "type": "string",
+        "default": "",
+        "maxLength": 500
+      },
+      {
+        "key": "allowTokenWithoutKeyring",
+        "title": "Allow token without keyring (not recommended)",
+        "description": "Only if this computer has no OS key store (for example a server running 'orca serve' without a desktop): store the link token in the plugin's plain private storage instead of refusing to link. Anyone who can read your Orca data folder could use the token. A permanent warning is shown while it is in use.",
+        "type": "boolean",
+        "default": false
+      }
+    ]
+  },
+  "capabilities": [
+    { "kind": "workspace:read" },
+    { "kind": "workspace:create" },
+    { "kind": "agent:launch" },
+    { "kind": "agent:read" },
+    { "kind": "terminal:read" },
+    { "kind": "terminal:send" },
+    { "kind": "secrets:own" },
+    { "kind": "storage:own" },
+    { "kind": "settings:own" }
+  ]
+}
