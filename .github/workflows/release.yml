@@ -1,0 +1,40 @@
+name: Release
+
+# Manual. Run it from main after the version bump has been merged: it checks the repository and
+# creates the tag vX.Y.Z and its GitHub release. Orca installs the newest tag of the repository.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Manifest guard
+        run: node scripts/check-manifest.mjs
+      - name: Tests
+        run: node --test test/*.test.ts
+      - name: Create the tag and the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          version="$(node -p "require('./orca-plugin.json').version")"
+          tag="v${version}"
+          if gh release view "$tag" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "::error::${tag} already exists. Bump \"version\" in orca-plugin.json and src/version.ts first."
+            exit 1
+          fi
+          gh release create "$tag" --target "$SHA" --title "$tag" --generate-notes
