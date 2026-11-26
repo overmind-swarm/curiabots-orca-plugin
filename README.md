@@ -2,7 +2,7 @@
 
 **English** · [Español](#español)
 
-Connects [Orca](https://orca.dev) to a [CuriaBots](https://curiabots.com) agent. Once linked, you can ask your agent (in plain language) to send an issue to Orca, ask what is running, answer questions of the Orca agent, or stop a job, and CuriaBots tells you when Orca needs something or a turn ends.
+Connects [Orca](https://orca.dev) to a [CuriaBots](https://curiabots.com) agent. Once linked, you can ask your agent (in plain language) to send work to Orca (an issue, or just an instruction such as «fix the login redirect»), ask what is running, answer questions of the Orca agent, or stop a job, and CuriaBots tells you when Orca needs something or a turn ends.
 
 The plugin only makes **outgoing** connections (WSS over 443) to the CuriaBots *Orca* skill. No ports to open, no Tailscale. Your Orca and GitHub credentials never leave your computer.
 
@@ -155,7 +155,7 @@ MIT, see [LICENSE](LICENSE). Copyright (c) 2026 Overmind Swarm.
 
 ## Español
 
-Conecta [Orca](https://orca.dev) con un agente de [CuriaBots](https://curiabots.com). Una vez vinculado, puedes pedirle a tu agente en lenguaje natural que mande una issue a Orca, que te diga qué hay en marcha, que responda a una pregunta del agente de Orca o que pare un trabajo. CuriaBots te avisa cuando Orca necesita algo o termina un turno.
+Conecta [Orca](https://orca.dev) con un agente de [CuriaBots](https://curiabots.com). Una vez vinculado, puedes pedirle a tu agente en lenguaje natural que mande trabajo a Orca (una issue o solo una instrucción, como «corrige la redirección del login»), que te diga qué hay en marcha, que responda a una pregunta del agente de Orca o que pare un trabajo. CuriaBots te avisa cuando Orca necesita algo o termina un turno.
 
 El plugin solo abre conexiones **salientes** (WSS por 443) hacia la skill *Orca* de CuriaBots. No hay que abrir puertos ni usar Tailscale. Las credenciales de Orca y de GitHub no salen de tu ordenador.
 

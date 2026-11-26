@@ -1,7 +1,7 @@
 // Panel strings in English and Spanish (Orca's UI locale picks one).
 const en = {
   title: 'CuriaBots',
-  intro: 'Link a CuriaBots agent to this Orca so it can send issues here and follow their progress.',
+  intro: 'Link a CuriaBots agent to this Orca so it can send work here (an issue or just an instruction) and follow its progress.',
   linkTitle: 'Link an agent',
   linkHelp: 'In CuriaBots, open the Orca skill, choose "Link an Orca" and paste the one-time code here.',
   code: 'Linking code',
@@ -66,7 +66,7 @@ const en = {
 export type Strings = typeof en
 const es: Strings = {
   title: 'CuriaBots',
-  intro: 'Vincula un agente de CuriaBots con este Orca para que pueda enviarle issues y seguir su progreso.',
+  intro: 'Vincula un agente de CuriaBots con este Orca para que pueda enviarle trabajo (una issue o solo una instrucción) y seguir su progreso.',
   linkTitle: 'Vincular un agente',
   linkHelp: 'En CuriaBots abre la skill de Orca, elige "Vincular un Orca" y pega aquí el código de un solo uso.',
   code: 'Código de vinculación',
