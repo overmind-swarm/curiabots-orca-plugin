@@ -176,6 +176,7 @@ test('worktree CLI errors map to the contract without leaking file names or goin
   assert.doesNotMatch(worktreeFailure('runtime_error', dirty).message, /README|new1/)
   assert.equal(code('runtime_error', 'Failed to delete worktree at /home/u/zz. fatal: locked'), 'failed')
   assert.equal(code('runtime_error', ''), 'failed')
+  assert.doesNotMatch(worktreeFailure('runtime_error', 'Failed to delete worktree at /home/u/secret-project/zz. fatal: cannot lock /home/u/secret-project/.git/x').message, /secret-project|home/)
   assert.equal(code('selector_not_found', 'selector_not_found'), 'not_found')
   assert.equal(code('runtime_unavailable', ''), 'orca_unavailable')
   assert.equal(code('brand_new_code', 'text'), 'failed')

@@ -317,6 +317,10 @@ export function cliMessageOf(raw: unknown): string {
 // What `orca worktree rm` says when git refuses for uncommitted changes: the porcelain status lines.
 const DIRTY = /^Failed to delete worktree at [\s\S]*?\. ([ MADRCUT?!]{1,2} \S[^\n]*(?:\n[ MADRCUT?!]{2} \S[^\n]*)*)\s*$/
 
+/** Local paths and file names stay on this computer: an absolute path in a CLI message becomes `<path>`. */
+const scrub = (text: string, max: number): string =>
+  text.replace(/(?:[A-Za-z]:\\|\/)[^\s'"]+/g, '<path>').replace(/\s+/g, ' ').trim().slice(0, max)
+
 /** Error mapping of the worktree commands: never a mute `internal`. */
 export function worktreeFailure(cliCode: string | null, message: string): Error {
   const done = (code: string, text: string) => Object.assign(cliError(code, text), { cliCode: cliCode ?? undefined })
@@ -327,11 +331,11 @@ export function worktreeFailure(cliCode: string | null, message: string): Error 
       const files = dirty[1]!.split('\n').length
       return done('has_changes', `the worktree has uncommitted changes (${files} file${files === 1 ? '' : 's'})`)
     }
-    return done('failed', `Orca could not remove the worktree: ${message.replace(/\s+/g, ' ').trim().slice(0, 300) || 'no details'}`)
+    return done('failed', `Orca could not remove the worktree: ${scrub(message, 300) || 'no details'}`)
   }
   const mapped = cliFailure(cliCode) as Error & { code?: string }
   if (mapped.code === 'internal' && cliCode) {
-    return done('failed', `Orca refused the request (${cliCode})${message ? `: ${message.replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''}`)
+    return done('failed', `Orca refused the request (${cliCode})${message ? `: ${scrub(message, 200)}` : ''}`)
   }
   return mapped
 }
