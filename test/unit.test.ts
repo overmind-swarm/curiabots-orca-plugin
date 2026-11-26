@@ -20,7 +20,7 @@ test('backoff doubles from 1 s to a 5 min cap and always keeps a jitter floor', 
   }
 })
 
-test('excerpt: last 40 non-empty lines, at most 4 KiB, control sequences removed', () => {
+test('excerpt: at most 40 lines and 4 KiB keeping the end, control sequences removed', () => {
   const lines = Array.from({ length: 100 }, (_, i) => (i % 2 ? '' : `\u001b[1mline ${i}\u001b[0m`))
   const ex = buildExcerpt(lines)
   assert.equal(ex.split('\n').length, 40)

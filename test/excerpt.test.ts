@@ -60,6 +60,25 @@ test('codex: working screen is empty of UI, approval keeps the command and the o
   assert.doesNotMatch(ex, /Press enter|OpenAI Codex|model:|Fix the failing/)
 })
 
+test('long turns whose prompt echo scrolled out of the window still give the answer', () => {
+  const cut = (lines: string[], marker: RegExp) => lines.slice(lines.findIndex((l) => marker.test(l)))
+  const claude = cut(F.claudeWithPlaceholder, /^● Done/)
+  assert.equal(buildExcerpt(claude), 'Done: the config now loads from the environment first.')
+  const codex = cut(F.codexDone, /^• Edited/)
+  assert.equal(buildExcerpt(codex), F.CODEX_DONE_ANSWER)
+  assert.equal(buildExcerpt(cut(F.claudeDone(9), /^● Update/)), F.CLAUDE_DONE_ANSWER)
+})
+
+test('a selection panel without the usual dialog wording is still kept', () => {
+  const ex = buildExcerpt([
+    '● Bash(git status)', '  ⎿  clean', '',
+    ' ☐ Colour', '', 'Which colour should the badge be?', '❯ 1. Red', '  2. Blue', '  3. Type something.', '',
+    'Enter to select · ↑/↓ to navigate · Esc to cancel'
+  ])
+  assert.match(ex, /Which colour should the badge be\?/)
+  assert.doesNotMatch(ex, /Enter to select/)
+})
+
 test('excerpt is bounded in lines and bytes, keeping the end, and never contains control sequences', () => {
   const long = ['● ' + 'start', ...Array.from({ length: 300 }, (_, i) => `  line ${i} \u001b[31mred\u001b[0m ${'x'.repeat(60)}`)]
   const ex = buildExcerpt(long)
@@ -76,6 +95,7 @@ test('normalization: two reads of the same screen with other timers are the same
   const b = normalizeExcerpt(buildExcerpt(F.claudeDone(131)))
   assert.equal(a, b)
   assert.equal(normalizeExcerpt('Built in 9s (↑ 1.2k tokens) at 10:42:07'), normalizeExcerpt('Built in 1m (↑ 14k tokens) at 11:03'))
+  assert.notEqual(normalizeExcerpt('error at src/a.ts:41:12'), normalizeExcerpt('error at src/a.ts:88:03'), 'file positions are not clock times')
   assert.notEqual(normalizeExcerpt('3 tests failed'), normalizeExcerpt('5 tests failed'), 'counts of things still matter')
   assert.notEqual(normalizeExcerpt(F.CLAUDE_QUESTION_TEXT), normalizeExcerpt(F.CLAUDE_DONE_ANSWER))
 })

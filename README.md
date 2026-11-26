@@ -106,6 +106,8 @@ The `excerpt` of a `job.status` notice (and of `get_job`) is only the agent's la
 
 `read_output` is unchanged: it returns the raw lines.
 
+Upgrading from 0.2.x: the dedupe hash stored with a running job was computed without normalizing, so each such job may send one repeated notice, once.
+
 ## Tested platforms
 
 | Platform | State |

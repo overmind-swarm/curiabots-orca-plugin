@@ -113,7 +113,10 @@ function isToolBlock(block: Line[]): boolean {
  * - at most `maxLines` lines and `maxBytes` bytes, keeping the end.
  */
 export function buildExcerpt(raw: readonly string[], maxLines = 40, maxBytes = 4096): string {
-  const kept = prepare(raw).filter((l) => !isChrome(l))
+  const prepared = prepare(raw)
+  const kept = prepared.filter((l) => !isChrome(l))
+  // A selection panel's own hint is chrome, but it tells that the screen ends in a question.
+  const panel = prepared.filter(nonBlank).slice(-25).some((l) => /^(?:Enter to select|Esc to cancel)\b/.test(l.text.trim()))
 
   // Last prompt echo. A trailing prompt line with nothing after it is the composer (it may show a
   // placeholder), unless there is nothing but chrome between it and the echo before it.
@@ -126,13 +129,17 @@ export function buildExcerpt(raw: readonly string[], maxLines = 40, maxBytes = 4
   if (last !== undefined) {
     echo = last
     if (!kept.slice(last + 1).some(nonBlank)) {
+      // Nothing after the last prompt line: it is the composer (it may show a placeholder), unless
+      // only chrome lies between it and the echo before it. With no echo in the window (a long turn
+      // scrolled it off) the whole screen before the composer is the answer.
       const prev = prompts.at(-2)
-      if (prev !== undefined && kept.slice(prev + 1, last).some(nonBlank)) echo = prev
+      if (prev === undefined) echo = -1
+      else if (kept.slice(prev + 1, last).some(nonBlank)) echo = prev
     }
   }
-  let body = kept.slice(echo + 1)
-  // The composer left at the end, if the echo found is the one before it.
-  if (echo >= 0 && last !== undefined && echo !== last) body = kept.slice(echo + 1, last)
+  // The composer left at the end is never part of the answer.
+  const end = last !== undefined && echo !== last && !kept.slice(last + 1).some(nonBlank) ? last : kept.length
+  const body = kept.slice(echo + 1, end)
 
   const starts: number[] = []
   body.forEach((l, i) => {
@@ -147,7 +154,7 @@ export function buildExcerpt(raw: readonly string[], maxLines = 40, maxBytes = 4
   } else {
     const blocks = starts.map((s, k) => body.slice(s, starts[k + 1] ?? body.length))
     const tail = body.filter(nonBlank).slice(-20)
-    const dialog = tail.some((l) => DIALOG_CUES.some((re) => re.test(l.text.trim())))
+    const dialog = panel || tail.some((l) => DIALOG_CUES.some((re) => re.test(l.text.trim())))
     if (dialog) {
       chosen = blocks.at(-1)!
     } else {
@@ -179,7 +186,7 @@ export function normalizeExcerpt(excerpt: string): string {
     .replace(/[✻✶✳✢✽✺∴]/g, '')
     .replace(/\b\d+(?:\.\d+)?\s?(?:ms|sec|secs|seconds|min|mins|minutes|hrs?|h|s|m)\b/gi, '#')
     .replace(/\b\d[\d.,]{0,12}\s?[kKmM]?\s?tokens?\b/gi, '#')
-    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, '#')
+    .replace(/(?<![\w:./-])\d{1,2}:\d{2}(?::\d{2})?(?![\w:])/g, '#')
     .replace(/\s+/g, ' ')
     .trim()
 }
