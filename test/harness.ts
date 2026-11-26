@@ -29,6 +29,10 @@ export interface Harness {
   workspaces: Set<string>
   /** `sendFails` makes `orca terminal send` fail like the real CLI: JSON on stdout and a non-zero exit. */
   showReply: { agentIdentity: string | null; connected: boolean; writable: boolean }
+  /** `orca worktree show`: given the selector, the worktree Orca resolves (null = selector_not_found). */
+  worktreeShow: (selector: string) => Record<string, unknown> | null
+  /** `orca worktree rm`: what the CLI answers (a JSON failure is thrown like the real non-zero exit). */
+  rmReply: { ok: true; result: Record<string, unknown> } | { ok: false; error: { code: string; message: string } }
   restart(): Promise<Plugin>
   restartWith(start: (plugin: Plugin) => Promise<void>): Promise<Plugin>
   link(linkId: string, token: string): Promise<void>
@@ -89,6 +93,23 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
         stderr: ''
       })
     }
+    if (args[0] === 'worktree' && args[1] === 'show') {
+      const selector = args[args.indexOf('--worktree') + 1]!
+      const w = h.worktreeShow(selector)
+      if (!w) {
+        throw Object.assign(new Error('Command failed'), {
+          stdout: JSON.stringify({ ok: false, error: { code: 'selector_not_found', message: 'selector_not_found' } }),
+          stderr: ''
+        })
+      }
+      return { stdout: JSON.stringify({ ok: true, result: { worktree: w } }), stderr: '' }
+    }
+    if (args[0] === 'worktree' && args[1] === 'rm') {
+      if (!h.rmReply.ok) {
+        throw Object.assign(new Error('Command failed'), { stdout: JSON.stringify(h.rmReply), stderr: '' })
+      }
+      return { stdout: JSON.stringify(h.rmReply), stderr: '' }
+    }
     return { stdout: JSON.stringify({ ok: true }), stderr: '' }
   }
   const states: PanelState[] = []
@@ -118,6 +139,18 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
     closeFails: null,
     workspaces,
     showReply: { agentIdentity: 'claude', connected: true, writable: true },
+    worktreeShow: (selector) => {
+      const m = /^identity:wt2:local:(ws-\d+)$/.exec(selector)
+      if (!m) return null
+      return {
+        id: `repo-1::/wt/${m[1]}`,
+        identity: { key: `wt2:local:${m[1]}`, executionHostId: 'local', instanceId: m[1] },
+        isMainWorktree: false,
+        branch: `refs/heads/curia/${m[1]}`,
+        path: `/wt/${m[1]}`
+      }
+    },
+    rmReply: { ok: true, result: { removed: true, catalogVersion: { epoch: 'e', sequence: 1 } } },
     async restart() {
       h.plugin.dispose()
       h.plugin = make()

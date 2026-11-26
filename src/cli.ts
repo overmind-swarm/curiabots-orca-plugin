@@ -5,12 +5,27 @@ import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 
 export const CLI_TIMEOUT_MS = 30_000
+/** Deleting a worktree can take a while (a big checkout); the skill waits 120 s for `remove_workspace`. */
+export const WORKTREE_RM_TIMEOUT_MS = 100_000
+// eslint-disable-next-line no-control-regex
+const WORKTREE_SELECTOR = /^(identity|id):[^\u0000-\u001f\u007f]{1,2000}$/
+// eslint-disable-next-line no-control-regex
+const WORKTREE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}::[^\u0000-\u001f\u007f]{1,2000}$/
 
 export interface ExecResult {
   stdout: string
   stderr: string
 }
 export type ExecFn = (file: string, args: string[], timeoutMs: number) => Promise<ExecResult>
+
+export interface WorktreeInfo {
+  /** Orca's exact id (`<repo-id>::<path>`), the only thing `worktree rm` is given. */
+  id: string
+  identityKey: string
+  isMain: boolean
+  /** `refs/heads/<name>` or null (detached). */
+  branch: string | null
+}
 
 export interface CliInfo {
   path: string
@@ -148,6 +163,71 @@ export class OrcaCli {
   }
 
   /**
+   * `orca worktree show --worktree <selector> --json`: the one worktree Orca resolves for an exact selector.
+   * Throws `not_found` when Orca knows no such worktree (`selector_not_found`), else the usual mapped errors.
+   */
+  async worktreeShow(selector: string): Promise<WorktreeInfo> {
+    if (!WORKTREE_SELECTOR.test(selector)) throw cliError('internal', 'bad worktree selector')
+    const parsed = await this.runJson(['worktree', 'show', '--worktree', selector, '--json'], CLI_TIMEOUT_MS)
+    const w = (parsed as { result?: { worktree?: Record<string, unknown> } }).result?.worktree
+    const identity = w?.identity as { key?: unknown } | undefined
+    if (!w || typeof w.id !== 'string' || typeof identity?.key !== 'string') {
+      throw cliError('failed', 'Orca returned an unexpected answer for the worktree')
+    }
+    return {
+      id: w.id,
+      identityKey: identity.key,
+      isMain: w.isMainWorktree !== false, // anything but an explicit "not main" is treated as main
+      branch: typeof w.branch === 'string' ? w.branch : null
+    }
+  }
+
+  /**
+   * `orca worktree rm --worktree id:<exact id> --delete-branch [--force] --json`. Semantics of Orca 1.4.277:
+   * without `--force` it refuses a worktree with uncommitted changes (a `runtime_error` that lists the
+   * files: normalised to `has_changes`, without the file names), and `--delete-branch` keeps a branch
+   * Orca cannot prove integrated and says so with `preservedBranch`. `not_found` when the worktree is gone.
+   */
+  async worktreeRemove(worktreeId: string, force: boolean): Promise<{ preservedBranch: string | null }> {
+    if (!WORKTREE_ID.test(worktreeId)) throw cliError('internal', 'bad worktree id')
+    const args = ['worktree', 'rm', '--worktree', `id:${worktreeId}`, '--delete-branch']
+    if (force) args.push('--force')
+    args.push('--json')
+    const parsed = (await this.runJson(args, WORKTREE_RM_TIMEOUT_MS)) as { result?: { preservedBranch?: { branchName?: unknown } } }
+    const kept = parsed.result?.preservedBranch
+    if (kept && typeof kept === 'object') {
+      return { preservedBranch: typeof kept.branchName === 'string' && kept.branchName ? kept.branchName : '' }
+    }
+    return { preservedBranch: null }
+  }
+
+  /** Runs the CLI (resolved path, no shell) and returns its JSON answer; failures become errors of the contract. */
+  private async runJson(args: string[], timeoutMs: number): Promise<object> {
+    let info = await this.resolve()
+    if (!info) info = await this.resolve(true)
+    if (!info) throw cliError('cli_unavailable', 'the Orca CLI was not found')
+    let out: ExecResult
+    try {
+      out = await this.exec(info.path, args, timeoutMs)
+    } catch (error) {
+      const e = error as { killed?: boolean; signal?: string; stdout?: unknown; stderr?: unknown }
+      if (e.killed || e.signal === 'SIGTERM') throw cliError('timeout', 'the Orca CLI timed out')
+      const code = cliCodeOf(e.stdout, e.stderr)
+      if (!code) this.checkedAt = 0
+      throw worktreeFailure(code, cliMessageOf(e.stdout))
+    }
+    let parsed: { ok?: unknown } | null = null
+    try {
+      parsed = JSON.parse(out.stdout) as { ok?: unknown }
+    } catch {
+      throw cliError('failed', 'the Orca CLI answered something that is not JSON')
+    }
+    if (!parsed || typeof parsed !== 'object') throw cliError('failed', 'the Orca CLI answered something unexpected')
+    if (parsed.ok === false) throw worktreeFailure(cliCodeOf(out.stdout, out.stderr), cliMessageOf(out.stdout))
+    return parsed
+  }
+
+  /**
    * `orca terminal send`: `text` (optionally followed by Enter). Throws an error whose `code` is already
    * a code of the contract (`cli_unavailable`, `timeout`, `needs_option`, `forbidden`...) and whose
    * `cliCode` is the CLI's own, for logs.
@@ -220,4 +300,38 @@ export function cliFailure(cliCode: string | null): Error {
 
 function cliError(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
+}
+
+/** The CLI's `error.message` from its JSON, bounded and without control characters. */
+export function cliMessageOf(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  try {
+    const v = JSON.parse(raw.slice(0, 20_000)) as { error?: { message?: unknown } }
+    // eslint-disable-next-line no-control-regex
+    return typeof v.error?.message === 'string' ? v.error.message.slice(0, 4000).replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ') : ''
+  } catch {
+    return ''
+  }
+}
+
+// What `orca worktree rm` says when git refuses for uncommitted changes: the porcelain status lines.
+const DIRTY = /^Failed to delete worktree at [\s\S]*?\. ([ MADRCUT?!]{1,2} \S[^\n]*(?:\n[ MADRCUT?!]{2} \S[^\n]*)*)\s*$/
+
+/** Error mapping of the worktree commands: never a mute `internal`. */
+export function worktreeFailure(cliCode: string | null, message: string): Error {
+  const done = (code: string, text: string) => Object.assign(cliError(code, text), { cliCode: cliCode ?? undefined })
+  if (cliCode === 'selector_not_found') return done('not_found', 'the worktree no longer exists in Orca')
+  if (cliCode === 'runtime_error') {
+    const dirty = DIRTY.exec(message)
+    if (dirty) {
+      const files = dirty[1]!.split('\n').length
+      return done('has_changes', `the worktree has uncommitted changes (${files} file${files === 1 ? '' : 's'})`)
+    }
+    return done('failed', `Orca could not remove the worktree: ${message.replace(/\s+/g, ' ').trim().slice(0, 300) || 'no details'}`)
+  }
+  const mapped = cliFailure(cliCode) as Error & { code?: string }
+  if (mapped.code === 'internal' && cliCode) {
+    return done('failed', `Orca refused the request (${cliCode})${message ? `: ${message.replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''}`)
+  }
+  return mapped
 }

@@ -19,6 +19,7 @@ export type ErrorCode =
   | 'cli_unavailable'
   | 'timeout'
   | 'needs_option'
+  | 'has_changes'
   | 'internal'
 
 export type JobState =
@@ -57,7 +58,7 @@ export interface Limits {
   max_prompt_bytes?: number
 }
 
-export type CommandName = 'start_job' | 'get_job' | 'read_output' | 'send' | 'stop'
+export type CommandName = 'start_job' | 'get_job' | 'read_output' | 'send' | 'stop' | 'remove_workspace'
 
 export interface StartJobArgs {
   job_id: string
@@ -83,12 +84,18 @@ export interface SendArgs {
   enter?: boolean
   option?: number
 }
+/** Deletes the worktree the job created. `force` discards uncommitted changes. Only `job_id` selects what is removed. */
+export interface RemoveWorkspaceArgs {
+  job_id: string
+  force: boolean
+}
 export interface CommandArgsMap {
   start_job: StartJobArgs
   get_job: JobArgs
   read_output: ReadOutputArgs
   send: SendArgs
   stop: JobArgs
+  remove_workspace: RemoveWorkspaceArgs
 }
 
 export type ServerMessage =
@@ -214,6 +221,10 @@ function validateAny(name: CommandName, args: unknown, maxPromptBytes: number): 
     case 'get_job':
     case 'stop':
       return { ok: true, value: { job_id: id.value } }
+    case 'remove_workspace': {
+      if (args.force !== undefined && args.force !== null && typeof args.force !== 'boolean') return bad('invalid force')
+      return { ok: true, value: { job_id: id.value, force: args.force === true } }
+    }
     case 'read_output': {
       const n = args.tail_lines
       if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) return bad('invalid tail_lines')
@@ -269,7 +280,7 @@ function validateAny(name: CommandName, args: unknown, maxPromptBytes: number): 
   }
 }
 
-export const COMMAND_NAMES: readonly CommandName[] = ['start_job', 'get_job', 'read_output', 'send', 'stop']
+export const COMMAND_NAMES: readonly CommandName[] = ['start_job', 'get_job', 'read_output', 'send', 'stop', 'remove_workspace']
 export function isCommandName(name: string): name is CommandName {
   return (COMMAND_NAMES as readonly string[]).includes(name)
 }

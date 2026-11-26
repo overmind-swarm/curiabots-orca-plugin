@@ -1,6 +1,6 @@
 // Jobs: the five commands of the contract, strictly scoped to the link that started each job, and
 // the stabilised job.status events that come from Orca's agent status changes.
-import type { OrcaCli } from './cli.ts'
+import type { OrcaCli, WorktreeInfo } from './cli.ts'
 import { M } from './methods.ts'
 import type { HostPort } from './host.ts'
 import { logLine } from './host.ts'
@@ -74,6 +74,9 @@ function mapHostError(error: unknown): CommandResult {
     case 'orca_unavailable':
     case 'invalid_args':
     case 'needs_option':
+    case 'has_changes':
+    case 'failed':
+    case 'in_progress':
       return fail(code, message)
     default:
       return fail('internal', message)
@@ -153,6 +156,8 @@ export class JobManager {
         return this.send(linkId, checked.value as any)
       case 'stop':
         return this.stop(linkId, (checked.value as any).job_id)
+      case 'remove_workspace':
+        return this.removeWorkspace(linkId, checked.value as { job_id: string; force: boolean })
     }
   }
 
@@ -408,6 +413,21 @@ export class JobManager {
     const job = own.job
     if (job.phase !== 'running' || !job.terminal_id) return { ok: true, data: { stopped: true } }
     const excerpt = await this.readExcerpt(job)
+    const refused = await this.closeTerminal(linkId, job)
+    if (refused) return refused
+    this.close(job, 'stopped')
+    this.emitStatus(job, 'stopped', excerpt)
+    await this.d.store.saveJobs(linkId)
+    this.d.changed()
+    return { ok: true, data: { stopped: true } }
+  }
+
+  /**
+   * Closes the job's terminal for real. Returns null when it is closed (or was already), or the error
+   * result to give back when it is alive and could not be closed (the caller then changes nothing).
+   */
+  private async closeTerminal(linkId: string, job: JobRecord): Promise<CommandResult | null> {
+    if (!job.terminal_id) return null
     try {
       await this.d.host.call(M.terminalClose, { terminalId: job.terminal_id })
     } catch (error) {
@@ -432,11 +452,93 @@ export class JobManager {
         }
       }
     }
-    this.close(job, 'stopped')
-    this.emitStatus(job, 'stopped', excerpt)
-    await this.d.store.saveJobs(linkId)
-    this.d.changed()
-    return { ok: true, data: { stopped: true } }
+    return null
+  }
+
+  /**
+   * Deletes the worktree this job created, and only that one: the target is read from the stored job of
+   * this link (the arguments carry no path or id), resolved through Orca's CLI by its exact identity,
+   * never the repository's main worktree. The agent is stopped first, with the guarantees of `stop`.
+   */
+  private async removeWorkspace(linkId: string, a: { job_id: string; force: boolean }): Promise<CommandResult> {
+    const own = this.own(linkId, a.job_id)
+    if ('error' in own) return own.error
+    const job = own.job
+    if (this.inflight.has(`${linkId}:${job.job_id}`)) return fail('in_progress', 'this job is still being started')
+    const key = `rm:${linkId}:${job.job_id}`
+    if (this.inflight.has(key)) return fail('in_progress', 'this job is already being removed')
+    const run = this.runRemove(linkId, job, a.force).finally(() => this.inflight.delete(key))
+    this.inflight.set(key, run)
+    return run
+  }
+
+  private async runRemove(linkId: string, job: JobRecord, force: boolean): Promise<CommandResult> {
+    const base = { link_id: linkId, job_id: job.job_id, force }
+    this.log('remove_workspace', base)
+    const goneData = (): CommandResult => ({ ok: true, data: { removed: true, branch_deleted: false, already_gone: true } })
+    // The job never got a worktree (the start failed or was interrupted): nothing exists to remove.
+    if (!job.workspace_id) return goneData()
+
+    let stoppedExcerpt: string | undefined
+    let stoppedNow = false
+    if (job.phase === 'running' && job.terminal_id) {
+      stoppedExcerpt = await this.readExcerpt(job)
+      const refused = await this.closeTerminal(linkId, job)
+      if (refused) return refused
+      this.close(job, 'stopped')
+      stoppedNow = true
+    }
+    // The agent is stopped but the worktree stays: the skill must know the job stopped.
+    const keepStopped = async (result: CommandResult): Promise<CommandResult> => {
+      if (stoppedNow) {
+        this.emitStatus(job, 'stopped', stoppedExcerpt)
+        await this.d.store.saveJobs(linkId)
+        this.d.changed()
+      }
+      return result
+    }
+
+    const selector = worktreeSelectorOf(job.workspace_id)
+    if (!selector) {
+      this.log('remove_workspace.refused', { ...base, reason: 'no_selector' })
+      return keepStopped(fail('forbidden', 'cannot identify the job\'s worktree'))
+    }
+    let entry: WorktreeInfo
+    try {
+      entry = await this.d.cli.worktreeShow(selector)
+    } catch (error) {
+      if (errorCode(error) === 'not_found') return this.finishRemoved(job, goneData())
+      return keepStopped(mapHostError(error))
+    }
+    // It must be exactly the job's worktree, and never the repository's own checkout.
+    const sameWorktree = entry.id === job.workspace_id || `identity:${entry.identityKey}` === job.workspace_id
+    if (!sameWorktree || entry.isMain) {
+      this.log('remove_workspace.refused', { ...base, reason: entry.isMain ? 'main_worktree' : 'identity_mismatch' })
+      return keepStopped(fail('forbidden', 'the job\'s worktree cannot be removed'))
+    }
+    const branch = entry.branch ? entry.branch.replace(/^refs\/heads\//, '') : undefined
+    try {
+      const out = await this.d.cli.worktreeRemove(entry.id, force)
+      const kept = out.preservedBranch !== null
+      const shown = kept ? out.preservedBranch || branch : branch
+      const data: Record<string, unknown> = { removed: true, branch_deleted: !kept && Boolean(branch) }
+      if (shown) data.branch = shown
+      if (kept) data.branch_kept_reason = 'not_integrated'
+      this.log('remove_workspace.done', { ...base, branch_deleted: data.branch_deleted })
+      return this.finishRemoved(job, { ok: true, data })
+    } catch (error) {
+      if (errorCode(error) === 'not_found') return this.finishRemoved(job, goneData())
+      const cliCode = (error as { cliCode?: unknown }).cliCode
+      this.log('remove_workspace.failed', { ...base, error_code: errorCode(error), cli_code: typeof cliCode === 'string' ? cliCode : undefined })
+      return keepStopped(mapHostError(error))
+    }
+  }
+
+  private async finishRemoved(job: JobRecord, result: CommandResult): Promise<CommandResult> {
+    // Closes the job here, before Orca's own `workspace.removed` event can call it "workspace_removed".
+    if (job.phase !== 'gone') this.markGone(job, 'removed_by_user')
+    await this.d.store.saveJobs(job.link_id)
+    return result
   }
 
   // ---- events from Orca ----------------------------------------------------------------------
@@ -610,6 +712,13 @@ export class JobManager {
       }
     }
   }
+}
+
+/** The Orca selector of the worktree a job created: `workspace_id` is Orca's `identity:<key>` or its full `<repo>::<path>` id. */
+function worktreeSelectorOf(workspaceId: string): string | null {
+  if (/^identity:\S{1,400}$/.test(workspaceId)) return workspaceId
+  if (workspaceId.includes('::') && !workspaceId.includes('\n')) return `id:${workspaceId}`
+  return null
 }
 
 function startData(job: JobRecord): Record<string, unknown> {

@@ -166,3 +166,18 @@ test('object-key names are never valid job ids', () => {
   for (const id of ['__proto__', 'constructor', 'prototype', 'hasOwnProperty'])
     assert.equal(validateArgs('get_job', { job_id: id }).ok, false, id)
 })
+
+test('worktree CLI errors map to the contract without leaking file names or going mute', async () => {
+  const { worktreeFailure } = await import('../src/cli.ts')
+  const code = (cliCode: string | null, message: string) => (worktreeFailure(cliCode, message) as any).code
+  const dirty = 'Failed to delete worktree at /home/u/x/zz. M README.md\nA  new1.txt'
+  assert.equal(code('runtime_error', dirty), 'has_changes')
+  assert.equal(code('runtime_error', 'Failed to delete worktree at /home/u/x/zz. ?? dirty.txt'), 'has_changes')
+  assert.doesNotMatch(worktreeFailure('runtime_error', dirty).message, /README|new1/)
+  assert.equal(code('runtime_error', 'Failed to delete worktree at /home/u/zz. fatal: locked'), 'failed')
+  assert.equal(code('runtime_error', ''), 'failed')
+  assert.equal(code('selector_not_found', 'selector_not_found'), 'not_found')
+  assert.equal(code('runtime_unavailable', ''), 'orca_unavailable')
+  assert.equal(code('brand_new_code', 'text'), 'failed')
+  assert.equal(code(null, ''), 'internal')
+})

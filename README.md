@@ -35,7 +35,7 @@ Orca installs the newest `vX.Y.Z` tag and shows the permissions the plugin asks 
 | `storage:own` | Keep the installation id, links, jobs and the outbox of pending notices. |
 | `settings:own` | Read the plugin settings. |
 
-It does **not** ask for automations or session history, and it never receives shell commands from the cloud: it only understands five commands (`start_job`, `get_job`, `read_output`, `send`, `stop`).
+It does **not** ask for automations or session history, and it never receives shell commands from the cloud: it only understands six commands (`start_job`, `get_job`, `read_output`, `send`, `stop`, `remove_workspace`). `remove_workspace` deletes the worktree of one job, and only that worktree (never the repository's main checkout), with `orca worktree rm`; it is sent only when you press "Delete" in the job screen of the CuriaBots app and confirm. Without "force" Orca refuses to delete a worktree with uncommitted changes, and the local branch is kept unless Orca can prove it is merged.
 
 ## Link an agent
 
@@ -188,7 +188,7 @@ Orca instala el tag `vX.Y.Z` más reciente y te enseña los permisos que pide el
 | `storage:own` | Guardar el identificador de instalación, las vinculaciones, los jobs y la cola de avisos pendientes. |
 | `settings:own` | Leer los ajustes del plugin. |
 
-**No** pide automatizaciones ni historial de sesiones, y nunca recibe comandos de shell desde la nube: solo entiende cinco comandos (`start_job`, `get_job`, `read_output`, `send`, `stop`).
+**No** pide automatizaciones ni historial de sesiones, y nunca recibe comandos de shell desde la nube: solo entiende seis comandos (`start_job`, `get_job`, `read_output`, `send`, `stop`, `remove_workspace`). `remove_workspace` borra el worktree de un job, y solo ese (nunca el checkout principal del repositorio), con `orca worktree rm`; solo se envía cuando pulsas «Eliminar» en la pantalla del job de la app de CuriaBots y confirmas. Sin «forzar», Orca se niega a borrar un worktree con cambios sin confirmar, y la rama local se conserva salvo que Orca demuestre que está integrada.
 
 ### Vincular un agente
 
