@@ -8,7 +8,7 @@ The plugin only makes **outgoing** connections (WSS over 443) to the CuriaBots *
 
 ## Requirements
 
-- Orca **1.4.259 or newer** (desktop app). Plugins must be turned on (Settings → Plugins).
+- Orca **1.4.274 or newer** (desktop app). Plugins must be turned on (Settings → Plugins).
 - A CuriaBots agent with the **Orca** skill added from the app store.
 - An OS key store, so the link token is stored encrypted (see [Where the token lives](#where-the-token-lives)).
 - Optional: the Orca CLI, only to reply to an agent (`send`).
@@ -161,7 +161,7 @@ El plugin solo abre conexiones **salientes** (WSS por 443) hacia la skill *Orca*
 
 ### Requisitos
 
-- Orca **1.4.259 o superior** (aplicación de escritorio), con los plugins activados (Ajustes → Plugins).
+- Orca **1.4.274 o superior** (aplicación de escritorio), con los plugins activados (Ajustes → Plugins).
 - Un agente de CuriaBots con la skill **Orca** añadida desde la tienda de apps.
 - Un almacén de claves del sistema, para guardar cifrado el token (ver [Dónde se guarda el token](#dónde-se-guarda-el-token)).
 - Opcional: la CLI de Orca, solo para responder a un agente (`send`).

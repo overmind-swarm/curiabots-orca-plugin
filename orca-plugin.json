@@ -2,14 +2,15 @@
   "manifestVersion": 2,
   "id": "curiabots",
   "name": "CuriaBots",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Connects Orca to a CuriaBots agent: send issues to Orca and follow what its agents do.",
   "icon": "assets/icon.png",
+  "cover": { "path": "assets/cover.jpg", "alt": "CuriaBots robot logo next to the title CuriaBots para Orca and a one-line description of the connector" },
   "author": { "name": "Overmind Swarm", "url": "https://github.com/overmind-swarm" },
   "repository": "https://github.com/overmind-swarm/curiabots-orca-plugin",
   "homepage": "https://curiabots.com",
   "license": "MIT",
-  "engines": { "orca": ">=1.4.259" },
+  "engines": { "orca": ">=1.4.274" },
   "execution": "trusted-worker",
   "pluginApi": 1,
   "main": "src/worker.ts",
@@ -18,7 +19,7 @@
       {
         "id": "curiabots",
         "title": "CuriaBots",
-        "icon": "bot",
+        "icon": { "path": "M11 3a1 1 0 1 0 2 0a1 1 0 1 0 -2 0M12 4v2.5M8 6.5h8a4 4 0 0 1 4 4v4.5a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4v-4.5a4 4 0 0 1 4 -4zM2 11.5v3M22 11.5v3M8 14.25q1.5 -2.5 3 0M15.5 11.75v2.5", "mode": "stroke" },
         "entry": "src/panel.tsx",
         "ui": "components"
       }

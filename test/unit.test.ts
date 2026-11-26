@@ -151,7 +151,15 @@ test('PLUGIN_VERSION matches the manifest and the manifest asks for no more than
   const settings = Object.fromEntries(manifest.contributes.settings.map((s: any) => [s.key, s]))
   assert.equal(settings.allowTokenWithoutKeyring.default, false)
   assert.equal(settings.serviceUrl.default, 'https://api.curiabots.com/skills/orca')
-  assert.match(manifest.engines.orca, /^>=1\.4\.259$/)
+  // 1.4.274: the panel icon may be an inline SVG path (our robot), drawn in the theme color.
+  assert.match(manifest.engines.orca, /^>=1\.4\.274$/)
+  const icon = manifest.contributes.panels[0].icon
+  assert.equal(typeof icon, 'object')
+  assert.match(icon.path, /^M[MmLlHhVvCcSsQqTtAaZz0-9 ,.+\-eE]*$/)
+  assert.ok(icon.path.length <= 4096)
+  assert.equal(icon.mode, 'stroke')
+  assert.equal(manifest.cover.path, 'assets/cover.jpg')
+  assert.ok(manifest.cover.alt.length > 0)
 })
 
 test('object-key names are never valid job ids', () => {
