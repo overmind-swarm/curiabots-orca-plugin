@@ -224,3 +224,17 @@ test('two removals of the same job at once: the second is told it is in progress
   assert.deepEqual([a, b].map((x) => x.ok).sort(), [false, true])
   assert.equal([a, b].find((x) => !x.ok)!.error.code, 'in_progress')
 })
+
+test('while a removal is in progress the vanishing worktree is never reported as workspace_removed or workspace_missing', async () => {
+  await oneJob()
+  // Orca reports the workspace as removed (event and list) while the removal is still stopping the agent
+  h.host.handlers['terminal.close'] = () => {
+    h.plugin.onWorkspaceRemoved({ workspaceListId: 'identity:wt2:local:ws-1' })
+    return { closed: true }
+  }
+  const pending = h.skill.command('link-a', 'remove_workspace', { job_id: JOB1 })
+  assert.equal((await pending).ok, true)
+  await until(() => events().some((e) => e.kind === 'job.gone'))
+  await new Promise((res) => setTimeout(res, 100))
+  assert.deepEqual(events().filter((e) => e.kind === 'job.gone').map((e) => e.reason), ['removed_by_user'])
+})

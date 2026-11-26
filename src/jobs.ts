@@ -626,6 +626,8 @@ export class JobManager {
   }
 
   private markGone(job: JobRecord, reason: string): void {
+    // The removal this plugin is carrying out makes the worktree vanish on purpose: only its own `removed_by_user` is reported.
+    if (reason !== 'removed_by_user' && this.inflight.has(`rm:${job.link_id}:${job.job_id}`)) return
     this.close(job, 'gone')
     this.log('job.gone', { link_id: job.link_id, job_id: job.job_id, reason })
     this.d.publish(job.link_id, { kind: 'job.gone', job_id: job.job_id, reason })
