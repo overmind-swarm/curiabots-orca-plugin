@@ -278,7 +278,7 @@ export class Plugin {
         tooltip = `CuriaBots: ${online} of ${live.length} link(s) online.`
       }
     }
-    let icon = 'plug'
+    let icon = 'bot'
     if (state.token_without_keyring) {
       text += ' · token without keyring'
       tone = 'warning'
