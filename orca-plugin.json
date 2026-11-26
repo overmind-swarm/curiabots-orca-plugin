@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "curiabots",
   "name": "CuriaBots",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Connects Orca to a CuriaBots agent: send issues to Orca and follow what its agents do.",
   "author": { "name": "Overmind Swarm", "url": "https://github.com/overmind-swarm" },
   "repository": "https://github.com/overmind-swarm/curiabots-orca-plugin",
@@ -22,7 +22,7 @@
         "ui": "components"
       }
     ],
-    "events": [{ "on": "agent.status.changed" }, { "on": "workspace.removed" }],
+    "events": [{ "on": "agent.status.changed" }, { "on": "workspace.created" }, { "on": "workspace.removed" }],
     "statusBarItems": [
       { "id": "curiabots", "text": "CuriaBots", "icon": "plug", "tooltip": "CuriaBots connector" }
     ],

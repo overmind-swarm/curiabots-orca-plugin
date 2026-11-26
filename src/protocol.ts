@@ -14,6 +14,8 @@ declare module 'orca' {
       input: { link_id: string; projects: { id: string; host_id: string }[] }
       output: { ok: boolean }
     }
+    /** Turns "Allow all projects" on or off for a link (off by default). */
+    'link.projects.allowAll': { input: { link_id: string; on: boolean }; output: { ok: boolean } }
     /** Git projects Orca lists, local and SSH. */
     'projects.list': {
       output: { ok: boolean; projects: { id: string; name: string; host_id: string; path: string }[] }

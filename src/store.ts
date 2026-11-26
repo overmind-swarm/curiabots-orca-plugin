@@ -25,6 +25,13 @@ export interface LinkRecord {
   /** Base URL fixed when the link was made, so a later settings change never redirects a token. */
   service_url: string
   allowed_projects: AllowedProject[]
+  /**
+   * "Allow all projects": the link may use every Git project Orca lists (not hidden), including ones
+   * added later, and `allowed_projects` is ignored. Absent in links saved before 0.2.0 = false.
+   */
+  allow_all_projects?: boolean
+  /** Name of the link in CuriaBots, if the server sent it in `welcome`. */
+  link_name?: string
   created_at: number
   /** The skill revoked it; the token is gone and only "remove" is left. */
   revoked?: boolean
@@ -85,6 +92,11 @@ export class Store {
     }
     const links = await this.host.storage.get('links')
     this.links = Array.isArray(links) ? (links as LinkRecord[]) : []
+    // Links saved by 0.1.x have no flag: they keep their explicit list (migration is the default).
+    for (const link of this.links) {
+      link.allow_all_projects = link.allow_all_projects === true
+      if (!Array.isArray(link.allowed_projects)) link.allowed_projects = []
+    }
     for (const link of this.links) {
       const jobs = await this.host.storage.get(`jobs:${link.link_id}`)
       this.jobs.set(link.link_id, jobs && typeof jobs === 'object' ? (jobs as Record<string, JobRecord>) : {})

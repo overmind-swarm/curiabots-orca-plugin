@@ -87,7 +87,15 @@ export interface CommandArgsMap {
 }
 
 export type ServerMessage =
-  | { type: 'welcome'; link_id: string; bot_label: string; limits: Limits }
+  | {
+      type: 'welcome'
+      link_id: string
+      /** Absent when the server does not send it: the plugin then keeps the label it already has. */
+      bot_label?: string
+      /** Optional name the user gave the link in CuriaBots. */
+      link_name?: string
+      limits: Limits
+    }
   | { type: 'command'; id: string; name: string; args: unknown }
   | { type: 'ack'; seq: number }
   | { type: 'revoked'; reason: string }
@@ -139,7 +147,15 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         if (maxJobs) limits.max_jobs = maxJobs
         if (maxPrompt) limits.max_prompt_bytes = maxPrompt
       }
-      return { type: 'welcome', link_id: msg.link_id, bot_label: cleanLabel(msg.bot_label, 'CuriaBots'), limits }
+      const botLabel = cleanLabel(msg.bot_label, '')
+      const linkName = cleanLabel(msg.link_name, '')
+      return {
+        type: 'welcome',
+        link_id: msg.link_id,
+        ...(botLabel ? { bot_label: botLabel } : {}),
+        ...(linkName ? { link_name: linkName } : {}),
+        limits
+      }
     }
     case 'command':
       if (typeof msg.id !== 'string' || !COMMAND_ID.test(msg.id) || typeof msg.name !== 'string') return null

@@ -27,5 +27,41 @@ export default defineCheck({
       ]
     },
     secrets: { 'link:link-1': 'token-for-the-check-0000000000' }
+  },
+  linkedNoProjects: {
+    results: { 'project.list': projects },
+    storage: {
+      installation_id: '0f0f0f0f-aaaa-bbbb-cccc-000000000001',
+      links: [
+        {
+          link_id: 'link-1',
+          bot_label: 'Marvin',
+          link_name: 'Laptop of Sergio',
+          host_label: 'laptop',
+          service_url: 'https://api.curiabots.com/skills/orca',
+          allowed_projects: [],
+          created_at: 0
+        }
+      ]
+    },
+    secrets: { 'link:link-1': 'token-for-the-check-0000000000' }
+  },
+  linkedAllProjects: {
+    results: { 'project.list': projects },
+    storage: {
+      installation_id: '0f0f0f0f-aaaa-bbbb-cccc-000000000001',
+      links: [
+        {
+          link_id: 'link-1',
+          bot_label: 'Marvin',
+          host_label: 'laptop',
+          service_url: 'https://api.curiabots.com/skills/orca',
+          allowed_projects: [],
+          allow_all_projects: true,
+          created_at: 0
+        }
+      ]
+    },
+    secrets: { 'link:link-1': 'token-for-the-check-0000000000' }
   }
 })

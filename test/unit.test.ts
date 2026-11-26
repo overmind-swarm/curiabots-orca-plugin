@@ -52,6 +52,10 @@ test('state mapping follows the contract', () => {
 test('server messages are validated', () => {
   const ok = parseServerMessage(JSON.stringify({ v: 1, type: 'welcome', link_id: 'l-1', bot_label: 'Bot\n', limits: { max_jobs: 3, max_prompt_bytes: 99999999 } }))
   assert.deepEqual(ok, { type: 'welcome', link_id: 'l-1', bot_label: 'Bot', limits: { max_jobs: 3, max_prompt_bytes: 16384 } })
+  const named = parseServerMessage(JSON.stringify({ v: 1, type: 'welcome', link_id: 'l-1', bot_label: 'Bot', link_name: ' Mi Orca\n', limits: {} }))
+  assert.deepEqual(named, { type: 'welcome', link_id: 'l-1', bot_label: 'Bot', link_name: 'Mi Orca', limits: {} })
+  const bare = parseServerMessage(JSON.stringify({ v: 1, type: 'welcome', link_id: 'l-1', limits: {} }))
+  assert.deepEqual(bare, { type: 'welcome', link_id: 'l-1', limits: {} }, 'no label sent: nothing to overwrite with')
   for (const bad of [
     'x', '[]', '{"v":2,"type":"ping"}', '{"v":1}', '{"v":1,"type":"nope"}',
     '{"v":1,"type":"welcome","link_id":"../x"}',

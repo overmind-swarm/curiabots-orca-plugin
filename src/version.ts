@@ -1,2 +1,2 @@
 // Keep in step with "version" in orca-plugin.json (a test checks it).
-export const PLUGIN_VERSION = '0.1.0'
+export const PLUGIN_VERSION = '0.2.0'

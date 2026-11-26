@@ -25,8 +25,8 @@ Orca installs the newest `vX.Y.Z` tag and shows the permissions the plugin asks 
 
 | Permission | Why |
 |---|---|
-| `workspace:read` | List your projects (to choose which ones a link may use) and hear when a workspace is removed. |
-| `workspace:create` | Create the git worktree for a job, only in projects you allowed. |
+| `workspace:read` | List your projects (to choose which ones a link may use) and hear when a workspace is created or removed (to keep the list current in *Allow all projects* mode). |
+| `workspace:create` | Create the git worktree for a job, only in projects you allowed (or, if you turn on *Allow all projects*, in projects Orca lists). |
 | `agent:launch` | Start the agent (Claude Code, Codex...) in that worktree with the instruction. |
 | `agent:read` | Hear when the agent starts working, waits for you or finishes. |
 | `terminal:read` | Read a bounded excerpt of the job's terminal output to include in notices and `read_output`. |
@@ -41,9 +41,20 @@ It does **not** ask for automations or session history, and it never receives sh
 
 1. In CuriaBots open the **Orca** skill of your agent and choose **Link an Orca**. You get a one-time code that expires in 10 minutes.
 2. In Orca open the **CuriaBots** panel (right sidebar), paste the code, optionally name this computer, and press **Link**.
-3. Under **Allowed projects** tick the projects this link may work in. Nothing is allowed by default: a link with no projects cannot start jobs. The decision is made here, on your machine.
+3. Under **Allowed projects** tick the projects this link may work in. Nothing is allowed by default: a link with no projects cannot start jobs, and while that is so the section is open with a warning and a **Choose projects** button. The decision is made here, on your machine. Once projects are chosen the section can be folded; its title still says how many and which (or *All*).
+
+The card shows the agent's name as its title and, if the service sends one, the name you gave the link in CuriaBots.
 
 You can link several agents to the same Orca (each link has its own token, projects and connection and sees only its own jobs) and one agent to several Orcas. The status bar shows `CuriaBots: online`, `linked`, `offline` or `unlinked`.
+
+### Allow all projects
+
+Each link has a switch, **Allow all projects**, **off by default**. Turn it on and the agent can start work in **any** Git project Orca lists (local and SSH), including projects you add later, instead of only the ticked ones. The panel warns when you turn it on: the agent can launch work in any project of this Orca, including repos with access to production.
+
+- Folders that are not Git projects, and projects you **hid** in Orca, are not included (hiding is your own "I do not work here"). A hidden project can still be allowed by ticking it in the explicit list.
+- The service gets the list in `hello` and in `projects`, as with the explicit list.
+- **Keeping the list current:** the plugin re-reads Orca's project list when a workspace is created or removed and every 60 seconds (a project added without any workspace raises no event), and sends a new `projects` message only if the list changed. `start_job` additionally checks the project against Orca's live list at that moment, so a stale announcement never widens what can be started, and a project that is not in `project.list` (a path, a folder, a hidden one, another host's id) is always refused. If Orca cannot list projects, `start_job` fails with `orca_unavailable` and the last announced list is kept.
+- Turning it off goes back to your explicit list, which is kept untouched. Links made with 0.1.x load with it off.
 
 ## Unlink
 
@@ -66,7 +77,7 @@ Press **Unlink** (twice, to confirm) in the panel. The token is deleted, the ski
 
 ## How jobs work
 
-- `start_job` creates a worktree in an allowed project and starts the agent with the instruction. It is idempotent per job id and never creates a second worktree for the same id.
+- `start_job` creates a worktree in an allowed project (the ticked ones, or any listed project with *Allow all projects*) and starts the agent with the instruction. It is idempotent per job id and never creates a second worktree for the same id.
 - Status changes are reported after they hold for 5 seconds, with the last lines of output (at most 4 KiB). Notices wait in a local outbox, survive restarts and are resent until the service acknowledges them.
 - `send` (answering an agent) is accepted only if the agent is waiting for input or finished its turn (never on a permission prompt: those you resolve in Orca) and the Orca CLI confirms the terminal is still running that agent.
 - Limits: 5 active jobs per link and 10 in total, whatever the service asks.
@@ -148,8 +159,8 @@ Orca instala el tag `vX.Y.Z` más reciente y te enseña los permisos que pide el
 
 | Permiso | Para qué |
 |---|---|
-| `workspace:read` | Listar tus proyectos (para elegir cuáles puede usar una vinculación) y enterarse de que se borra un workspace. |
-| `workspace:create` | Crear el worktree de un job, solo en los proyectos que permitiste. |
+| `workspace:read` | Listar tus proyectos (para elegir cuáles puede usar una vinculación) y enterarse de que se crea o se borra un workspace (para mantener la lista al día en el modo *Permitir todos los proyectos*). |
+| `workspace:create` | Crear el worktree de un job, solo en los proyectos que permitiste (o, si activas *Permitir todos los proyectos*, en los que Orca lista). |
 | `agent:launch` | Arrancar el agente (Claude Code, Codex...) en ese worktree con la instrucción. |
 | `agent:read` | Saber cuándo el agente trabaja, espera o termina. |
 | `terminal:read` | Leer un extracto acotado de la salida de la terminal del job para los avisos y `read_output`. |
@@ -164,9 +175,20 @@ Orca instala el tag `vX.Y.Z` más reciente y te enseña los permisos que pide el
 
 1. En CuriaBots abre la skill **Orca** de tu agente y elige **Vincular un Orca**. Obtienes un código de un solo uso que caduca en 10 minutos.
 2. En Orca abre el panel **CuriaBots** (barra lateral derecha), pega el código, pon un nombre a este ordenador si quieres y pulsa **Vincular**.
-3. En **Proyectos permitidos** marca los proyectos en los que puede trabajar esa vinculación. Por defecto no hay ninguno: una vinculación sin proyectos no puede lanzar jobs. La decisión se toma aquí, en tu máquina.
+3. En **Proyectos permitidos** marca los proyectos en los que puede trabajar esa vinculación. Por defecto no hay ninguno: una vinculación sin proyectos no puede lanzar jobs. La decisión se toma aquí, en tu máquina. Mientras no haya ninguno, la sección aparece desplegada con un aviso y un botón **Elegir proyectos**. Con proyectos elegidos puede plegarse; su título sigue diciendo cuántos y cuáles (o *Todos*).
+
+La tarjeta muestra como título el nombre del agente y, si el servicio lo envía, el nombre que diste a la vinculación en CuriaBots.
 
 Puedes vincular varios agentes al mismo Orca (cada vinculación tiene su token, sus proyectos y su conexión, y solo ve sus propios jobs) y un agente a varios Orca. La barra de estado muestra `CuriaBots: online`, `linked`, `offline` o `unlinked`.
+
+#### Permitir todos los proyectos
+
+Cada vinculación tiene un interruptor, **Permitir todos los proyectos**, **desactivado por defecto**. Al activarlo, el agente puede lanzar trabajo en **cualquier** proyecto Git que liste Orca (local y SSH), incluidos los que añadas después, en vez de solo los marcados. El panel avisa al activarlo: el agente podrá lanzar trabajo en cualquier proyecto de este Orca, incluidos repos con acceso a producción.
+
+- No entran las carpetas que no son proyectos Git ni los proyectos que **ocultaste** en Orca (ocultar es tu forma de decir «aquí no trabajo»). Un proyecto oculto se puede permitir marcándolo en la lista explícita.
+- El servicio recibe la lista en `hello` y en `projects`, igual que con la lista explícita.
+- **Cómo se mantiene la lista al día:** el plugin relee la lista de proyectos de Orca cuando se crea o se borra un workspace y cada 60 segundos (un proyecto añadido sin workspace no genera evento), y envía un `projects` nuevo solo si la lista cambió. Además `start_job` comprueba el proyecto contra la lista viva de Orca en ese instante, así que un anuncio desfasado nunca amplía lo que se puede lanzar, y un proyecto que no esté en `project.list` (una ruta, una carpeta, uno oculto, el id de otro host) se rechaza siempre. Si Orca no puede listar proyectos, `start_job` falla con `orca_unavailable` y se conserva la última lista anunciada.
+- Al desactivarlo se vuelve a tu lista explícita, que se conserva intacta. Las vinculaciones hechas con 0.1.x cargan con él desactivado.
 
 ### Desvincular
 
@@ -189,7 +211,7 @@ Pulsa **Desvincular** (dos veces, para confirmar) en el panel. Se borra el token
 
 ### Cómo funcionan los jobs
 
-- `start_job` crea un worktree en un proyecto permitido y arranca el agente con la instrucción. Es idempotente por id de job y nunca crea un segundo worktree para el mismo id.
+- `start_job` crea un worktree en un proyecto permitido (los marcados, o cualquiera listado con *Permitir todos los proyectos*) y arranca el agente con la instrucción. Es idempotente por id de job y nunca crea un segundo worktree para el mismo id.
 - Los cambios de estado se notifican cuando se mantienen 5 segundos, con las últimas líneas de salida (máx. 4 KiB). Los avisos esperan en una cola local, sobreviven a reinicios y se reenvían hasta que el servicio los confirma.
 - `send` (responder a un agente) solo se acepta si el agente espera una respuesta o terminó su turno (nunca ante un permiso: esos los resuelves en Orca) y la CLI de Orca confirma que la terminal sigue ejecutando ese agente.
 - Límites: 5 jobs activos por vinculación y 10 en total, pida lo que pida el servicio.

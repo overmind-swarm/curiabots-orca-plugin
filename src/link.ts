@@ -3,7 +3,6 @@
 import type { HostPort } from './host.ts'
 import { logLine } from './host.ts'
 import type { Store } from './store.ts'
-import { toProjectRefs } from './store.ts'
 import { backoffDelay, errorMessage } from './util.ts'
 import type { ErrorCode, JobEvent, Limits, ProjectRef } from './wire.ts'
 import { PROTOCOL_VERSION, parseServerMessage } from './wire.ts'
@@ -31,6 +30,8 @@ export interface Timing {
   resendMs: number
   backoffBaseMs: number
   backoffCapMs: number
+  /** How often "allow all" links re-read Orca's project list. */
+  projectsPollMs: number
 }
 
 export const DEFAULT_TIMING: Timing = {
@@ -39,7 +40,8 @@ export const DEFAULT_TIMING: Timing = {
   watchdogMs: 75_000,
   resendMs: 60_000,
   backoffBaseMs: 1000,
-  backoffCapMs: 300_000
+  backoffCapMs: 300_000,
+  projectsPollMs: 60_000
 }
 
 export type CommandResult =
@@ -63,6 +65,9 @@ export interface LinkConnectionOptions {
   pluginVersion: string
   platform: string
   helloInfo: () => Promise<HelloInfo>
+  /** Projects to announce (the explicit list, or all of Orca's in "allow all" mode). */
+  projectRefs: () => Promise<ProjectRef[]>
+  onWelcome: (info: { bot_label?: string; link_name?: string }) => void
   onCommand: (name: string, args: unknown, limits: Limits) => Promise<CommandResult>
   onChange: () => void
   onRevoked: (reason: string) => void
@@ -152,7 +157,8 @@ export class LinkConnection {
     try {
       const info = await this.o.helloInfo()
       if (this.socket !== socket) return
-      const projects: ProjectRef[] = toProjectRefs(this.o.store.link(this.o.linkId)?.allowed_projects ?? [])
+      const projects = await this.o.projectRefs()
+      if (this.socket !== socket) return
       this.rawSend({
         v: PROTOCOL_VERSION,
         type: 'hello',
@@ -190,6 +196,7 @@ export class LinkConnection {
         this.welcomed = true
         this.attempt = 0
         this.limits = msg.limits
+        this.o.onWelcome({ bot_label: msg.bot_label, link_name: msg.link_name })
         this.lastError = null
         this.setStatus('online')
         this.armWatchdog(socket)
@@ -312,10 +319,14 @@ export class LinkConnection {
     this.flush(false)
   }
 
-  sendProjects(): void {
-    if (!this.welcomed) return
-    const projects = toProjectRefs(this.o.store.link(this.o.linkId)?.allowed_projects ?? [])
+  /** Sends the current project list; resolves to what was sent (null if the link is not up). */
+  async sendProjects(): Promise<ProjectRef[] | null> {
+    if (!this.welcomed) return null
+    const socket = this.socket
+    const projects = await this.o.projectRefs()
+    if (!this.welcomed || this.socket !== socket) return null
     this.rawSend({ v: PROTOCOL_VERSION, type: 'projects', projects })
+    return projects
   }
 
   get isOnline(): boolean {

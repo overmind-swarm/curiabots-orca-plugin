@@ -11,7 +11,8 @@ export const FAST = {
   watchdogMs: 5000,
   resendMs: 5000,
   backoffBaseMs: 20,
-  backoffCapMs: 80
+  backoffCapMs: 80,
+  projectsPollMs: 3_600_000
 }
 
 export interface Harness {

@@ -17,6 +17,7 @@ import {
   Row,
   set,
   Stack,
+  Switch,
   Text,
   type PanelContext
 } from 'orca'
@@ -34,6 +35,8 @@ export const hostLabel = atom('hostLabel', '')
 export const busy = atom(false)
 export const pairError = atom<string | null>(null)
 export const confirmUnlink = atom<string | null>(null)
+/** Links whose projects section the user opened or closed by hand; the rest follow `needsProjects`. */
+export const projectsOpen = atom<Record<string, boolean>>({})
 
 async function refresh(): Promise<void> {
   try {
@@ -94,27 +97,82 @@ async function toggleProject(link: LinkView, project: Project, on: boolean): Pro
   await refresh()
 }
 
+async function setAllowAll(link: LinkView, on: boolean): Promise<void> {
+  await plugin.request('link.projects.allowAll', { link_id: link.link_id, on })
+  await refresh()
+}
+
+function setOpen(linkId: string, open: boolean): void {
+  set(projectsOpen, { ...read(projectsOpen), [linkId]: open })
+}
+
+/** "All", or how many projects are allowed and which ones (the first three). */
+export function projectsSummary(link: LinkView, t: ReturnType<typeof strings>): string {
+  if (link.allow_all_projects) return t.allProjects
+  if (link.projects.length === 0) return t.noneAllowed
+  const names = link.projects.slice(0, 3).map((p) => p.name)
+  const more = link.projects.length > 3 ? ` +${link.projects.length - 3}` : ''
+  return `${link.projects.length}: ${names.join(', ')}${more}`
+}
+
 function linkCard(link: LinkView) {
   const t = strings(env.locale)
   const list = read(projects)
   const asking = read(confirmUnlink) === link.link_id
   const revoked = link.status === 'revoked'
+  const needsProjects = !revoked && !link.allow_all_projects && link.projects.length === 0
+  const isOpen = read(projectsOpen)[link.link_id] ?? needsProjects
   const tone = link.status === 'online' ? 'success' : link.status === 'connecting' ? 'accent' : 'warning'
   return (
-    <Card key={link.link_id} title={link.bot_label} description={`${t.computer}: ${link.host_label}`}>
+    <Card
+      key={link.link_id}
+      title={link.bot_label}
+      description={`${link.link_name ? `${link.link_name} · ` : ''}${t.computer}: ${link.host_label}`}
+    >
       <Stack gap="sm">
         <KeyValue
           items={[
             { label: t.status, value: t[`status.${link.status}` as keyof typeof t] ?? link.status, tone },
             { label: t.jobs, value: link.active_jobs },
-            { label: t.projects, value: link.projects.length }
+            { label: t.projects, value: projectsSummary(link, t), tone: needsProjects ? 'warning' : undefined }
           ]}
         />
-        {!revoked ? (
-          <Collapsible title={t.projects} description={t.projectsHelp}>
+        {needsProjects && !isOpen ? (
+          <Callout tone="warning" title={t.needsProjectsTitle}>
             <Stack gap="xs">
-              {link.projects.length === 0 ? <Text muted size="xs">{t.noProjects}</Text> : null}
-              {list === null ? null : list.length === 0 ? (
+              <Text size="xs">{t.needsProjectsBody}</Text>
+              <Button size="sm" onPress={() => setOpen(link.link_id, true)}>
+                {t.chooseProjects}
+              </Button>
+            </Stack>
+          </Callout>
+        ) : null}
+        {!revoked ? (
+          <Collapsible
+            title={`${t.projects}: ${projectsSummary(link, t)}`}
+            description={t.projectsHelp}
+            open={isOpen}
+            onChange={(open: boolean) => setOpen(link.link_id, open)}
+          >
+            <Stack gap="xs">
+              {needsProjects ? (
+                <Callout tone="warning" title={t.needsProjectsTitle}>
+                  <Text size="xs">{t.needsProjectsBody}</Text>
+                </Callout>
+              ) : null}
+              <Switch
+                label={t.allowAll}
+                checked={link.allow_all_projects}
+                onChange={(on: boolean) => void setAllowAll(link, on)}
+              />
+              {link.allow_all_projects ? (
+                <Callout tone="danger" title={t.allowAllWarningTitle}>
+                  <Text size="xs">{t.allowAllWarning}</Text>
+                </Callout>
+              ) : (
+                <Text muted size="xs">{t.allowAllHelp}</Text>
+              )}
+              {link.allow_all_projects ? null : list === null ? null : list.length === 0 ? (
                 <Text muted size="xs">{t.noProjectsFound}</Text>
               ) : (
                 list.map((p) => (

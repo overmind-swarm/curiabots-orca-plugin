@@ -22,7 +22,8 @@ const base = {
 }
 const link = {
   link_id: 'l1', bot_label: 'T.A.R.S.', host_label: 'laptop', status: 'online', last_error: null,
-  active_jobs: 2, projects: [{ id: 'p1', host_id: 'local', name: 'One' }], token_in_storage: false
+  active_jobs: 2, projects: [{ id: 'p1', host_id: 'local', name: 'One' }], allow_all_projects: false, link_name: null,
+  token_in_storage: false
 }
 const projects = [
   { id: 'p1', name: 'One', host_id: 'local', path: '/one' },
@@ -121,4 +122,44 @@ test('the panel follows pushes from the worker and speaks Spanish', async () => 
   assert.ok(shows(view, 'Desconectado, reintentando'))
   await view.post('state.changed', { ...base, links: [{ ...link, status: 'revoked' }] })
   assert.ok(view.find({ role: 'button', text: 'Quitar' }))
+})
+
+test('with no project allowed the choice is open, with a warning and the all-projects switch', async () => {
+  const host = mockHost({
+    requests: { 'state.get': () => ({ ...base, links: [{ ...link, projects: [] }] }), 'projects.list': () => ({ ok: true, projects }) }
+  })
+  view = await mount(panel, { host })
+  assert.ok(shows(view, 'This link cannot start work yet: choose projects'))
+  assert.ok(view.find({ label: 'Allow all projects' }))
+  assert.ok(view.find({ label: 'Remote (ssh:box)' }), 'the list is visible without opening anything')
+})
+
+test('the folded summary says how many projects and which; the switch warns and keeps the list', async () => {
+  const calls: any[] = []
+  let on = false
+  const host = mockHost({
+    requests: {
+      'state.get': () => ({ ...base, links: [{ ...link, allow_all_projects: on }] }),
+      'projects.list': () => ({ ok: true, projects }),
+      'link.projects.allowAll': (input: any) => (calls.push(input), (on = input.on), { ok: true })
+    }
+  })
+  view = await mount(panel, { host })
+  assert.ok(shows(view, 'Allowed projects: 1: One'))
+  assert.equal(shows(view, 'This link cannot start work yet'), false)
+  await view.toggle({ type: 'Collapsible' })
+  await view.toggle({ label: 'Allow all projects' })
+  assert.deepEqual(calls, [{ link_id: 'l1', on: true }])
+  assert.ok(shows(view, 'including repos with access to production'))
+  assert.ok(shows(view, 'Allowed projects: All'))
+  assert.deepEqual(view.errors, [])
+})
+
+test('the card shows the bot label as title and the link name when the server sends it', async () => {
+  const host = mockHost({
+    requests: { 'state.get': () => ({ ...base, links: [{ ...link, bot_label: 'Marvin', link_name: 'Portatil' }] }), 'projects.list': () => ({ ok: true, projects }) }
+  })
+  view = await mount(panel, { host })
+  assert.ok(shows(view, 'Marvin'))
+  assert.ok(shows(view, 'Portatil · Computer: laptop'))
 })

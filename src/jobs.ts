@@ -37,6 +37,8 @@ export interface JobManagerDeps {
   cli: OrcaCli
   timing: JobTiming
   now: () => number
+  /** Git projects Orca lists now (not hidden); used by links with "allow all projects". */
+  eligibleProjects: () => Promise<{ id: string; name: string; host_id: string }[]>
   publish: (linkId: string, event: JobEvent) => void
   changed: () => void
 }
@@ -157,9 +159,20 @@ export class JobManager {
   private async startJob(linkId: string, a: any, limits: Limits): Promise<CommandResult> {
     const link = this.d.store.link(linkId)
     if (!link) return fail('forbidden', 'unknown link')
-    const allowed = link.allowed_projects.find(
-      (p) => p.id === a.project_id && (a.host_id === undefined || p.host_id === a.host_id)
-    )
+    const matches = (p: { id: string; host_id: string }) =>
+      p.id === a.project_id && (a.host_id === undefined || p.host_id === a.host_id)
+    let allowed: { id: string; host_id: string } | undefined
+    if (link.allow_all_projects === true) {
+      // Always checked against Orca's live list: any project it lists, nothing it does not.
+      try {
+        allowed = (await this.d.eligibleProjects()).find(matches)
+      } catch (error) {
+        this.log('start_job.rejected', { link_id: linkId, reason: 'list_failed' })
+        return mapHostError(error)
+      }
+    } else {
+      allowed = link.allowed_projects.find(matches)
+    }
     if (!allowed) {
       this.log('start_job.rejected', { link_id: linkId, reason: 'project_not_allowed' })
       return fail('forbidden', 'the project is not allowed for this link')

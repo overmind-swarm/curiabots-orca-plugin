@@ -43,6 +43,8 @@ export class FakeSkill {
   /** token -> link_id the skill accepts */
   tokens = new Map<string, string>()
   autoAck = true
+  /** Extra fields for the next `welcome` (for example `link_name`). */
+  welcomeExtra: Record<string, unknown> = {}
   welcomeLimits: Record<string, number> = { max_jobs: 5, max_prompt_bytes: 16384 }
   results = new Map<string, (r: any) => void>()
   private nextConn = 1
@@ -144,7 +146,7 @@ export class FakeSkill {
       if (!linkId) return this.closeConn(conn, 4401)
       conn.link_id = linkId
       conn.hello = msg
-      this.send(conn, { v: 1, type: 'welcome', link_id: linkId, bot_label: 'T.A.R.S.', limits: this.welcomeLimits })
+      this.send(conn, { v: 1, type: 'welcome', link_id: linkId, bot_label: 'T.A.R.S.', ...this.welcomeExtra, limits: this.welcomeLimits })
     } else if (msg.type === 'event' && this.autoAck) {
       this.send(conn, { v: 1, type: 'ack', seq: msg.seq })
     } else if (msg.type === 'result') {

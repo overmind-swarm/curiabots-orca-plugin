@@ -62,6 +62,9 @@ export default function activate(orca: OrcaWorkerApi): void {
   orca.events.on('agent.status.changed', (payload) => {
     void ready.then(() => plugin.onAgentStatus(payload as any))
   })
+  orca.events.on('workspace.created', () => {
+    void ready.then(() => plugin.onWorkspaceCreated())
+  })
   orca.events.on('workspace.removed', (payload) => {
     void ready.then(() => plugin.onWorkspaceRemoved(payload as any))
   })
@@ -87,6 +90,10 @@ export default function activate(orca: OrcaWorkerApi): void {
           .map((p) => ({ id: p.id, host_id: p.host_id }))
       : []
     return { ok: await plugin.setProjects(String(input?.link_id ?? ''), wanted) }
+  })
+  orca.panels.handle('link.projects.allowAll', async (input) => {
+    await ready
+    return { ok: await plugin.setAllowAll(String(input?.link_id ?? ''), input?.on === true) }
   })
   orca.panels.handle('projects.list', async () => {
     await ready
