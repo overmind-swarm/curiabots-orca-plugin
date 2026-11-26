@@ -4,6 +4,7 @@
   "name": "CuriaBots",
   "version": "0.4.1",
   "description": "Connects Orca to a CuriaBots agent: send issues to Orca and follow what its agents do.",
+  "icon": "assets/icon.png",
   "author": { "name": "Overmind Swarm", "url": "https://github.com/overmind-swarm" },
   "repository": "https://github.com/overmind-swarm/curiabots-orca-plugin",
   "homepage": "https://curiabots.com",
