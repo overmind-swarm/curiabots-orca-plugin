@@ -95,6 +95,17 @@ Logs contain identifiers, sizes and states only: never the token, the code, the 
 - *Token rejected*: the link was revoked on the service side. Unlink and link again.
 - *Plugin too old*: update it.
 
+## What a notice contains (0.3.0)
+
+The `excerpt` of a `job.status` notice (and of `get_job`) is only the agent's last relevant output, text of at most 40 lines and 4 KiB, not the whole terminal:
+
+- Control sequences, the agent's banner (Claude Code, Codex), box borders, spinners, timers and token counters (`✻ Cooked for 9s`), footers and hints (`⏵⏵ bypass permissions on`, `100% context left`) are removed.
+- Everything up to the last prompt echo (the prompt we sent) is cut, and so is the empty or placeholder prompt box at the end.
+- Of the agent's output blocks, the last text block is kept; tool calls and their results are dropped. If the screen ends in a question with options or a permission dialog, the last block is kept whole so the user sees what is asked.
+- A notice is not repeated when the state and the excerpt are the same once durations, counters, clock times and spinner glyphs are ignored. A change of state is always reported.
+
+`read_output` is unchanged: it returns the raw lines.
+
 ## Tested platforms
 
 | Platform | State |

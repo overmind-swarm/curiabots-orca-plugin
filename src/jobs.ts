@@ -5,7 +5,8 @@ import { M } from './methods.ts'
 import type { HostPort } from './host.ts'
 import { logLine } from './host.ts'
 import type { JobRecord, Store } from './store.ts'
-import { boundLines, buildExcerpt, errorCode, errorMessage } from './util.ts'
+import { boundLines, errorCode, errorMessage } from './util.ts'
+import { buildExcerpt, normalizeExcerpt } from './excerpt.ts'
 import type { CommandResult } from './link.ts'
 import { createHash } from 'node:crypto'
 import type { ErrorCode, JobEvent, JobState, Limits, OrcaState } from './wire.ts'
@@ -283,7 +284,7 @@ export class JobManager {
   private async readExcerpt(job: JobRecord): Promise<string | undefined> {
     if (!job.terminal_id) return undefined
     try {
-      const { lines } = (await this.d.host.call(M.terminalRead, { terminalId: job.terminal_id, maxLines: 200 })) as {
+      const { lines } = (await this.d.host.call(M.terminalRead, { terminalId: job.terminal_id, maxLines: 400 })) as {
         lines: string[]
       }
       return buildExcerpt(lines)
@@ -445,7 +446,9 @@ export class JobManager {
     // The state may have moved while the terminal was read.
     if (job.phase !== 'running' || this.timers.has(jobId)) return
     if (mapState(job.orca_state ?? 'done', job.outcome ?? undefined) !== state) return
-    // Dedupe by (state, excerpt hash): a second question in a row is a new event.
+    // Dedupe by (state, Orca state, normalized excerpt): a new question is a new event; the same
+    // screen with other timers or spinner frames is not. A state change is always reported, so the
+    // skill's view of the job never goes stale.
     if (state === job.last_emitted && excerptHash(state, job.orca_state, excerpt) === job.last_hash) return
     this.emitStatus(job, state, excerpt)
     await this.d.store.saveJobs(linkId)
@@ -509,5 +512,5 @@ function startData(job: JobRecord): Record<string, unknown> {
 
 /** Identity of a report: state, Orca's own state (a permission is not a question) and the excerpt. */
 function excerptHash(state: string, orca: string | null, excerpt: string | undefined): string {
-  return createHash('sha256').update(`${state}\n${orca ?? ''}\n${EXCERPT_STATES.has(state as JobState) ? (excerpt ?? '') : ''}`).digest('hex').slice(0, 16)
+  return createHash('sha256').update(`${state}\n${orca ?? ''}\n${EXCERPT_STATES.has(state as JobState) ? normalizeExcerpt(excerpt ?? '') : ''}`).digest('hex').slice(0, 16)
 }

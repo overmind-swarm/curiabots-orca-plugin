@@ -3,6 +3,7 @@ import { afterEach, test } from 'node:test'
 import { until } from './fake-skill.ts'
 import { setup } from './harness.ts'
 import type { Harness } from './harness.ts'
+import * as F from './terminal-fixtures.ts'
 
 let h: Harness
 afterEach(async () => h?.stop())
@@ -340,6 +341,26 @@ test('the same state with a different excerpt is a new event; the same excerpt i
   await until(() => h.skill.events('link-a').length === 3)
   assert.equal(h.skill.events('link-a')[2].event.state, 'waiting_user')
   assert.equal(h.skill.events('link-a')[2].event.orca_state, 'blocked', 'the skill can tell a permission from a question')
+})
+
+test('the same screen with other timers is not a second notice; a new answer is', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  await h.skill.command('link-a', 'start_job', start(JOB1))
+  let secs = 9
+  h.host.handlers['terminal.read'] = () => ({ lines: F.claudeDone(secs), truncated: false })
+  h.agentEvent('term_1', 'done', { mainAgent: { state: 'done', outcome: 'success' } })
+  await until(() => h.skill.events('link-a').length === 1)
+  assert.equal(h.skill.events('link-a')[0].event.excerpt, F.CLAUDE_DONE_ANSWER, 'only the answer, no banner or echo')
+  secs = 131 // two minutes later: reconcile or a duplicate event, same screen but for the timer
+  h.agentEvent('term_1', 'done', { mainAgent: { state: 'done', outcome: 'success' } })
+  await new Promise((r) => setTimeout(r, 200))
+  assert.equal(h.skill.events('link-a').length, 1, 'no event without news')
+  h.host.handlers['terminal.read'] = () => ({ lines: F.claudeQuestion(3), truncated: false })
+  h.agentEvent('term_1', 'done', { mainAgent: { state: 'done', outcome: 'success' } })
+  await until(() => h.skill.events('link-a').length === 2)
+  assert.match(h.skill.events('link-a')[1].event.excerpt, /Which one do you prefer/)
 })
 
 test('start_job is persisted as in progress BEFORE workspace.create', async () => {

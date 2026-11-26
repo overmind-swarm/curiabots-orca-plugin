@@ -4,7 +4,8 @@ import { test } from 'node:test'
 import { OrcaCli, candidatePaths, defaultExec, parseStatus } from '../src/cli.ts'
 import { resolveEndpoints } from '../src/endpoints.ts'
 import { PLUGIN_VERSION } from '../src/version.ts'
-import { backoffDelay, boundLines, buildExcerpt, truncateTailBytes } from '../src/util.ts'
+import { backoffDelay, boundLines, truncateTailBytes } from '../src/util.ts'
+import { buildExcerpt } from '../src/excerpt.ts'
 import { mapState, parseServerMessage, validateArgs } from '../src/wire.ts'
 
 test('backoff doubles from 1 s to a 5 min cap and always keeps a jitter floor', () => {
@@ -28,7 +29,7 @@ test('excerpt: last 40 non-empty lines, at most 4 KiB, control sequences removed
   const big = buildExcerpt(['é'.repeat(5000)])
   assert.ok(Buffer.byteLength(big) <= 4096)
   assert.equal(truncateTailBytes('abc', 10), 'abc')
-  assert.equal(buildExcerpt(['answer', '─'.repeat(80), '❯', '─'.repeat(80)]), 'answer\n❯', 'frame rules are dropped, content kept')
+  assert.equal(buildExcerpt(['answer', '─'.repeat(80), '❯', '─'.repeat(80)]), 'answer', 'frame rules and the empty prompt are dropped, content kept')
 })
 
 test('read_output lines are bounded in size and keep the newest', () => {

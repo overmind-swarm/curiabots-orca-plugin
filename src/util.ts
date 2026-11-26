@@ -28,17 +28,8 @@ const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u00
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g
 
-const FRAME_ONLY = /^[\s\u2500-\u257f\u2580-\u259f=_-]{3,}$/
-
 export function sanitizeLine(line: string): string {
   return line.replace(ANSI, '').replace(CONTROL, '').replace(/\s+$/, '')
-}
-
-/** Last non-empty lines of a terminal read, as one bounded string. */
-export function buildExcerpt(lines: readonly string[], maxLines = 40, maxBytes = 4096): string {
-  // Blank lines and pure frame lines (the ─── rules around an agent's prompt box) carry no content.
-  const kept = lines.map(sanitizeLine).filter((l) => l.trim() !== '' && !FRAME_ONLY.test(l))
-  return truncateTailBytes(kept.slice(-maxLines).join('\n'), maxBytes)
 }
 
 /** Lines of `read_output`, bounded in total size, keeping the newest. */
