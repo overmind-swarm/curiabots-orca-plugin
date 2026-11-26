@@ -22,6 +22,8 @@ export interface Harness {
   execCalls: { file: string; args: string[] }[]
   states: PanelState[]
   /** What `orca terminal show` reports for any terminal. */
+  /** Makes `orca terminal send` fail like the real CLI does: JSON on stdout and a non-zero exit. */
+  sendFails: string | null
   showReply: { agentIdentity: string | null; connected: boolean; writable: boolean }
   restart(): Promise<Plugin>
   restartWith(start: (plugin: Plugin) => Promise<void>): Promise<Plugin>
@@ -65,6 +67,12 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
     if (args[0] === 'terminal' && args[1] === 'show') {
       return { stdout: JSON.stringify({ ok: true, result: { terminal: { ...h.showReply } } }), stderr: '' }
     }
+    if (args[0] === 'terminal' && args[1] === 'send' && h.sendFails) {
+      throw Object.assign(new Error('Command failed'), {
+        stdout: JSON.stringify({ ok: false, error: { code: h.sendFails, message: 'refused' } }),
+        stderr: ''
+      })
+    }
     return { stdout: JSON.stringify({ ok: true }), stderr: '' }
   }
   const states: PanelState[] = []
@@ -90,6 +98,7 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
     plugin: make(),
     execCalls,
     states,
+    sendFails: null,
     showReply: { agentIdentity: 'claude', connected: true, writable: true },
     async restart() {
       h.plugin.dispose()

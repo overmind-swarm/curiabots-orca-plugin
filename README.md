@@ -95,7 +95,7 @@ Logs contain identifiers, sizes and states only: never the token, the code, the 
 - *Token rejected*: the link was revoked on the service side. Unlink and link again.
 - *Plugin too old*: update it.
 
-## What a notice contains (0.3.0)
+## What a notice contains
 
 The `excerpt` of a `job.status` notice (and of `get_job`) is only the agent's last relevant output, text of at most 40 lines and 4 KiB, not the whole terminal:
 
@@ -105,6 +105,12 @@ The `excerpt` of a `job.status` notice (and of `get_job`) is only the agent's la
 - A notice is not repeated when the state and the excerpt are the same once durations, counters, clock times and spinner glyphs are ignored. A change of state is always reported.
 
 `read_output` is unchanged: it returns the raw lines.
+
+When the agent shows a numbered selector (Claude Code's question and permission prompts: `1. Yes / 2. No / 3. Type something`), a `waiting_user` notice (and `get_job`) also carries `options: [{n, label}]` (n from 1 to 9, label up to 120 characters). A change of options counts as news for the dedupe.
+
+### Replying: `send`
+
+`send` takes exactly one of `text` (with `enter`) or `option` (an integer 1 to 9). An `option` types only that digit, with no Enter, which picks that option in a selector. Typing text into a selector is not reliable, so when the Orca CLI refuses with `agent_prompt_blocked` the plugin does not retry: it answers `needs_option` with `details.options` (the options detected on screen, possibly empty). Any other CLI failure is mapped to a code of the contract (`not_found`, `forbidden`, `invalid_args`, `timeout`, `orca_unavailable`) with a message that says what happened; the CLI's own code goes to the log as `error_code`.
 
 Upgrading from 0.2.x: the dedupe hash stored with a running job was computed without normalizing, so each such job may send one repeated notice, once.
 
@@ -242,7 +248,17 @@ Los logs contienen solo identificadores, tamaños y estados: nunca el token, el 
 - *Token rechazado*: la vinculación se revocó en el servicio. Desvincula y vuelve a vincular.
 - *Plugin demasiado antiguo*: actualízalo.
 
-### Plataformas probadas
+### Qué contiene un aviso
+
+El `excerpt` de un aviso `job.status` (y de `get_job`) es solo la última salida relevante del agente, de hasta 40 líneas y 4 KiB: sin banner, sin el eco del prompt, sin spinners, contadores ni pies de pantalla. Un aviso no se repite si el estado y el excerpt son iguales una vez ignorados duraciones, contadores, horas y spinners.
+
+Si el agente muestra un selector numerado (preguntas y permisos de Claude Code), un aviso `waiting_user` (y `get_job`) incluye `options: [{n, label}]` (n de 1 a 9, label de hasta 120 caracteres); un cambio de opciones cuenta como novedad.
+
+### Responder: `send`
+
+`send` admite exactamente uno de `text` (con `enter`) u `option` (entero de 1 a 9). Una `option` escribe solo ese dígito, sin Enter, y elige esa opción en un selector. Escribir texto en un selector no es fiable: si la CLI de Orca responde `agent_prompt_blocked`, el plugin no reintenta y devuelve `needs_option` con `details.options` (las opciones detectadas, posiblemente vacías). Cualquier otro fallo de la CLI se traduce a un código del contrato con un mensaje útil; el código de la CLI va al log como `error_code`.
+
+## Plataformas probadas
 
 | Plataforma | Estado |
 |---|---|

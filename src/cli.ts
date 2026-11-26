@@ -111,12 +111,18 @@ export class OrcaCli {
         connected: t.connected === true,
         writable: t.writable === true
       }
-    } catch {
-      throw cliError('internal', 'could not read the terminal from the Orca CLI')
+    } catch (error) {
+      const e = error as { stdout?: unknown; stderr?: unknown; code?: string }
+      if (e.code === 'internal' && e.stdout === undefined) throw cliError('internal', 'could not read the terminal from the Orca CLI')
+      throw cliFailure(cliCodeOf(e.stdout, e.stderr))
     }
   }
 
-  /** `orca terminal send`. Throws `cli_unavailable` or `timeout` / `internal`. */
+  /**
+   * `orca terminal send`: `text` (optionally followed by Enter). Throws an error whose `code` is already
+   * a code of the contract (`cli_unavailable`, `timeout`, `needs_option`, `forbidden`...) and whose
+   * `cliCode` is the CLI's own, for logs.
+   */
   async send(terminalId: string, text: string, enter: boolean): Promise<void> {
     if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(terminalId)) throw cliError('internal', 'bad terminal id')
     let info = await this.resolve()
@@ -126,22 +132,60 @@ export class OrcaCli {
     const args = ['terminal', 'send', '--terminal', terminalId, `--text=${text}`]
     if (enter) args.push('--enter')
     args.push('--json')
+    let out: ExecResult
     try {
-      const { stdout } = await this.exec(info.path, args, CLI_TIMEOUT_MS)
-      try {
-        const parsed = JSON.parse(stdout) as { ok?: unknown }
-        if (parsed.ok === false) throw cliError('internal', 'the CLI refused the text')
-      } catch (error) {
-        if ((error as { code?: string }).code) throw error
-      }
+      out = await this.exec(info.path, args, CLI_TIMEOUT_MS)
     } catch (error) {
-      const e = error as { code?: string; killed?: boolean; signal?: string }
-      if (e.code === 'internal' || e.code === 'cli_unavailable') throw error
       this.checkedAt = 0
+      const e = error as { killed?: boolean; signal?: string; stdout?: unknown; stderr?: unknown }
       if (e.killed || e.signal === 'SIGTERM') throw cliError('timeout', 'the Orca CLI timed out')
-      throw cliError('internal', 'the Orca CLI failed')
+      throw cliFailure(cliCodeOf(e.stdout, e.stderr))
     }
+    let parsed: { ok?: unknown } | null = null
+    try {
+      parsed = JSON.parse(out.stdout) as { ok?: unknown }
+    } catch {
+      /* not JSON: exit status 0 is enough */
+    }
+    if (parsed?.ok === false) throw cliFailure(cliCodeOf(out.stdout, out.stderr))
   }
+}
+
+/** The CLI's error code from its JSON (`{ok:false,error:{code}}` or `{code}`), else a known token in its text. */
+export function cliCodeOf(...outputs: unknown[]): string | null {
+  for (const raw of outputs) {
+    if (typeof raw !== 'string' || raw === '') continue
+    const text = raw.slice(0, 20_000)
+    try {
+      const v = JSON.parse(text) as { code?: unknown; error?: { code?: unknown } | string }
+      const code = typeof v.error === 'object' && v.error ? v.error.code : (v.code ?? (typeof v.error === 'string' ? v.error : undefined))
+      if (typeof code === 'string' && /^[A-Za-z0-9_.:-]{1,60}$/.test(code)) return code.toLowerCase()
+    } catch {
+      /* plain text */
+    }
+    const known = /\b(agent_prompt_blocked|terminal_not_found|not_writable|runtime_unavailable|invalid_argument|timeout)\b/.exec(text)
+    if (known) return known[1]!
+  }
+  return null
+}
+
+/** Maps a CLI error code to an error of the contract with a message the user can act on. */
+export function cliFailure(cliCode: string | null): Error {
+  const done = (code: string, message: string) => Object.assign(cliError(code, message), { cliCode: cliCode ?? undefined })
+  if (!cliCode) return done('internal', 'the Orca CLI failed without an error code')
+  if (cliCode === 'agent_prompt_blocked') {
+    return done('needs_option', 'the agent shows a selector: answer with the number of an option')
+  }
+  if (/not_found|no_such|unknown_terminal/.test(cliCode)) return done('not_found', 'the terminal no longer exists in Orca')
+  if (/timeout/.test(cliCode)) return done('timeout', 'the Orca CLI timed out')
+  if (/invalid|bad_|usage|missing/.test(cliCode)) return done('invalid_args', `the Orca CLI rejected the request (${cliCode})`)
+  if (/not_writable|read_only|readonly|forbidden|permission|denied|blocked|trust|not_agent/.test(cliCode)) {
+    return done('forbidden', `Orca does not allow writing to this terminal now (${cliCode})`)
+  }
+  if (/unavailable|not_running|runtime|connection|econn/.test(cliCode)) {
+    return done('orca_unavailable', `Orca is not available (${cliCode})`)
+  }
+  return done('orca_unavailable', `the Orca CLI refused the request (${cliCode})`)
 }
 
 function cliError(code: string, message: string): Error {

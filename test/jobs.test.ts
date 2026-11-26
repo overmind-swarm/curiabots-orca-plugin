@@ -363,6 +363,98 @@ test('the same screen with other timers is not a second notice; a new answer is'
   assert.match(h.skill.events('link-a')[1].event.excerpt, /Which one do you prefer/)
 })
 
+test('send takes text or an option, exactly one; an option is a bare digit without Enter', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  await h.skill.command('link-a', 'start_job', start(JOB1))
+  h.agentEvent('term_1', 'waiting')
+  await new Promise((r) => setTimeout(r, 150))
+  const code = async (args: any) => (await h.skill.command('link-a', 'send', { job_id: JOB1, ...args })).error?.code
+  assert.equal(await code({ text: 'a', enter: true, option: 2 }), 'invalid_args', 'both')
+  assert.equal(await code({}), 'invalid_args', 'neither')
+  for (const option of [0, 10, 1.5, '2', -1, null]) assert.equal(await code({ option }), 'invalid_args', String(option))
+  assert.equal(await code({ option: 2, enter: true }), 'invalid_args')
+  assert.equal(h.execCalls.filter((c) => c.args[1] === 'send').length, 0)
+  const ok = await h.skill.command('link-a', 'send', { job_id: JOB1, option: 2 })
+  assert.deepEqual(ok.data, { accepted: true })
+  assert.deepEqual(h.execCalls.at(-1)!.args, ['terminal', 'send', '--terminal', 'term_1', '--text=2', '--json'])
+  // same preconditions: never while blocked
+  h.agentEvent('term_1', 'blocked')
+  await new Promise((r) => setTimeout(r, 150))
+  h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_1', state: 'blocked', title: 't', agent: 'claude', stateStartedAt: 1 }] })
+  assert.equal(await code({ option: 1 }), 'forbidden')
+})
+
+test('agent_prompt_blocked on text answers needs_option with the detected options, and is not retried', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  await h.skill.command('link-a', 'start_job', start(JOB1))
+  h.agentEvent('term_1', 'waiting')
+  await new Promise((r) => setTimeout(r, 150))
+  h.host.handlers['terminal.read'] = () => ({ lines: F.claudeSelectorSimple, truncated: false })
+  h.sendFails = 'agent_prompt_blocked'
+  const r = await h.skill.command('link-a', 'send', { job_id: JOB1, text: 'no', enter: true })
+  assert.equal(r.ok, false)
+  assert.equal(r.error.code, 'needs_option')
+  assert.match(r.error.message, /selector/)
+  assert.deepEqual(r.error.details.options.map((o: any) => o.n), [1, 2, 3, 4])
+  assert.equal(h.execCalls.filter((c) => c.args[1] === 'send').length, 1, 'one attempt, no splitting')
+  h.host.handlers['terminal.read'] = () => ({ lines: ['nothing numbered'], truncated: false })
+  const none = await h.skill.command('link-a', 'send', { job_id: JOB1, text: 'no', enter: true })
+  assert.deepEqual(none.error.details, { options: [] })
+  assert.equal(h.host.logs.some((l) => /send\.cli_error .*error_code=agent_prompt_blocked/.test(l)), true)
+})
+
+test('CLI failures map to contract codes with a useful message, never a mute internal', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  await h.skill.command('link-a', 'start_job', start(JOB1))
+  h.agentEvent('term_1', 'waiting')
+  await new Promise((r) => setTimeout(r, 150))
+  const expected: Record<string, string> = {
+    terminal_not_found: 'not_found',
+    not_writable: 'forbidden',
+    runtime_unavailable: 'orca_unavailable',
+    invalid_argument: 'invalid_args',
+    some_new_code: 'orca_unavailable'
+  }
+  for (const [cli, want] of Object.entries(expected)) {
+    h.sendFails = cli
+    const r = await h.skill.command('link-a', 'send', { job_id: JOB1, text: 'x', enter: true })
+    assert.equal(r.error.code, want, cli)
+    assert.ok(r.error.message.length > 10)
+  }
+})
+
+test('waiting_user carries options; a change of options is news, the same options are not', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  await h.skill.command('link-a', 'start_job', start(JOB1))
+  let lines = F.claudeSelectorSimple
+  h.host.handlers['terminal.read'] = () => ({ lines, truncated: false })
+  h.agentEvent('term_1', 'waiting')
+  await until(() => h.skill.events('link-a').length === 1)
+  const ev = h.skill.events('link-a')[0].event
+  assert.equal(ev.state, 'waiting_user')
+  assert.deepEqual(ev.options.map((o: any) => o.label), ['Yes', 'No', 'Type something.', 'Chat about this'])
+  assert.match(ev.excerpt, /staging config/)
+  h.agentEvent('term_1', 'waiting')
+  await new Promise((r) => setTimeout(r, 200))
+  assert.equal(h.skill.events('link-a').length, 1, 'same selector: no news')
+  lines = F.claudeSelectorDescriptions
+  h.agentEvent('term_1', 'waiting')
+  await until(() => h.skill.events('link-a').length === 2)
+  assert.equal(h.skill.events('link-a')[1].event.options.length, 3)
+  lines = F.claudeQuestion(3)
+  h.agentEvent('term_1', 'waiting')
+  await until(() => h.skill.events('link-a').length === 3)
+  assert.equal(h.skill.events('link-a')[2].event.options, undefined, 'no selector, no options')
+})
+
 test('start_job is persisted as in progress BEFORE workspace.create', async () => {
   h = await setup()
   await h.link('link-a', 'tok_' + 'a'.repeat(40))

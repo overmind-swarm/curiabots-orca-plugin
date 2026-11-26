@@ -197,3 +197,60 @@ export const codexApproval = [
   '',
   '  Press enter to confirm or esc to cancel'
 ]
+
+// ---- Claude Code selectors (AskUserQuestion and permissions) -----------------------------------
+
+const ASK_ECHO = ['❯ Ask me which badge colour to use, then apply it.', '']
+
+/** AskUserQuestion with the usual extra choices. */
+export const claudeSelectorSimple = [
+  ...CLAUDE_BANNER,
+  ...ASK_ECHO,
+  '● Glob(src/**/*.ts)',
+  '  ⎿  Found 31 files',
+  '',
+  R,
+  ' ☐ Badge colour',
+  '',
+  'Should I apply the change to the staging config as well?',
+  '',
+  '❯ 1. Yes',
+  '  2. No',
+  '  3. Type something.',
+  R,
+  '  4. Chat about this',
+  '',
+  'Enter to select · ↑/↓ to navigate · Esc to cancel'
+]
+
+/** The same selector with the cursor on another item and a description under each option. */
+export const claudeSelectorDescriptions = [
+  ...ASK_ECHO,
+  R,
+  ' ☐ Approach',
+  '',
+  'Which approach should I take for the parser?',
+  '',
+  '  1. Patch parseMonth',
+  '     Smallest change, keeps the current structure.',
+  '❯ 2. Use the date library',
+  '     Replaces the parser; touches four files.',
+  '  3. Type something.',
+  '',
+  'Enter to select · ↑/↓ to navigate · Esc to cancel'
+]
+
+/** Tool permission selector (cursor on the first option). */
+export const claudeSelectorPermission = claudePermission
+
+/** A plain numbered list in an answer: no cursor, no hint, not a selector. */
+export const claudePlainList = claudeQuestion(5)
+
+/** A selector that was answered: the agent printed more afterwards. */
+export const claudeSelectorAnswered = [
+  ...claudeSelectorSimple,
+  '',
+  '● User answered: Yes. Applying the change to both configs.',
+  '',
+  ...CLAUDE_FOOTER
+]

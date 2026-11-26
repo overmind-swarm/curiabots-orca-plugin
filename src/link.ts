@@ -46,7 +46,7 @@ export const DEFAULT_TIMING: Timing = {
 
 export type CommandResult =
   | { ok: true; data: unknown }
-  | { ok: false; error: { code: ErrorCode; message: string } }
+  | { ok: false; error: { code: ErrorCode; message: string; details?: Record<string, unknown> } }
 
 export interface HelloInfo {
   orca_version: string

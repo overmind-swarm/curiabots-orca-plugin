@@ -59,12 +59,12 @@ const DIALOG_CUES: readonly RegExp[] = [
 const CODEX_TOOL = /^(?:Explor(?:ed|ing)\b|Updated Plan\b|Waited\b|Waiting\b|(?:Edited|Added|Deleted) \S.{0,200} \(\+\d+ -\d+\)$)/
 const CLAUDE_TOOL = /^[A-Z][A-Za-z0-9_.:-]{0,40}\(.*\)$|\(MCP\)/
 
-interface Line {
+export interface Line {
   text: string
   boxed: boolean
 }
 
-function prepare(raw: readonly string[]): Line[] {
+export function prepare(raw: readonly string[]): Line[] {
   const out: Line[] = []
   for (const r of raw) {
     let text = sanitizeLine(r.length > MAX_LINE * 2 ? r.slice(0, MAX_LINE * 2) : r)

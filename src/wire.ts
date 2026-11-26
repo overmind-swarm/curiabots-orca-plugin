@@ -18,6 +18,7 @@ export type ErrorCode =
   | 'orca_unavailable'
   | 'cli_unavailable'
   | 'timeout'
+  | 'needs_option'
   | 'internal'
 
 export type JobState =
@@ -45,6 +46,8 @@ export type JobEvent =
       orca_state: OrcaState
       outcome?: string
       excerpt?: string
+      /** Numbered choices of the selector the agent shows (waiting_user only). */
+      options?: { n: number; label: string }[]
       at: number
     }
   | { kind: 'job.gone'; job_id: string; reason: string }
@@ -73,10 +76,12 @@ export interface ReadOutputArgs {
   job_id: string
   tail_lines: number
 }
+/** Exactly one of `text` (with `enter`) or `option` (a digit 1..9, sent alone, no Enter). */
 export interface SendArgs {
   job_id: string
-  text: string
-  enter: boolean
+  text?: string
+  enter?: boolean
+  option?: number
 }
 export interface CommandArgsMap {
   start_job: StartJobArgs
@@ -215,6 +220,13 @@ function validateAny(name: CommandName, args: unknown, maxPromptBytes: number): 
       return { ok: true, value: { job_id: id.value, tail_lines: Math.min(n, MAX_TAIL_LINES) } }
     }
     case 'send': {
+      if (args.option !== undefined && args.option !== null) {
+        if (args.text !== undefined && args.text !== null) return bad('send takes text or option, not both')
+        const o = args.option
+        if (typeof o !== 'number' || !Number.isInteger(o) || o < 1 || o > 9) return bad('invalid option')
+        if (args.enter !== undefined && args.enter !== false) return bad('option is sent without enter')
+        return { ok: true, value: { job_id: id.value, option: o } }
+      }
       if (typeof args.text !== 'string' || args.text.length === 0) return bad('invalid text')
       if (byteLength(args.text) > MAX_SEND_BYTES || args.text.includes('\u0000')) return bad('invalid text')
       if (typeof args.enter !== 'boolean') return bad('invalid enter')

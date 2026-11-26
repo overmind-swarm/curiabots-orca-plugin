@@ -232,7 +232,7 @@ export function compactOutbox(box: OutboxData): void {
   }
   if (box.events.length > MAX_OUTBOX) {
     // Only terminal events are left: they keep their state but no longer hold terminal output.
-    for (const e of box.events) if (e.event.kind === 'job.status') delete e.event.excerpt
+    for (const e of box.events) if (e.event.kind === 'job.status') (delete e.event.excerpt, delete e.event.options)
     if (box.events.length > HARD_MAX_OUTBOX) box.events.splice(0, box.events.length - HARD_MAX_OUTBOX)
   }
 }

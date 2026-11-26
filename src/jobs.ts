@@ -7,6 +7,8 @@ import { logLine } from './host.ts'
 import type { JobRecord, Store } from './store.ts'
 import { boundLines, errorCode, errorMessage } from './util.ts'
 import { buildExcerpt, normalizeExcerpt } from './excerpt.ts'
+import { detectOptions } from './options.ts'
+import type { ScreenOption } from './options.ts'
 import type { CommandResult } from './link.ts'
 import { createHash } from 'node:crypto'
 import type { ErrorCode, JobEvent, JobState, Limits, OrcaState } from './wire.ts'
@@ -44,7 +46,10 @@ export interface JobManagerDeps {
   changed: () => void
 }
 
-const fail = (code: ErrorCode, message: string): CommandResult => ({ ok: false, error: { code, message } })
+const fail = (code: ErrorCode, message: string, details?: Record<string, unknown>): CommandResult => ({
+  ok: false,
+  error: details ? { code, message, details } : { code, message }
+})
 
 function mapHostError(error: unknown): CommandResult {
   const code = errorCode(error)
@@ -63,6 +68,13 @@ function mapHostError(error: unknown): CommandResult {
       return fail('invalid_args', message)
     case 'cli_unavailable':
       return fail('cli_unavailable', message)
+    // Already codes of the contract (thrown by the CLI wrapper with a message that helps).
+    case 'forbidden':
+    case 'not_found':
+    case 'orca_unavailable':
+    case 'invalid_args':
+    case 'needs_option':
+      return fail(code, message)
     default:
       return fail('internal', message)
   }
@@ -281,16 +293,20 @@ export class JobManager {
     return job.orca_state
   }
 
-  private async readExcerpt(job: JobRecord): Promise<string | undefined> {
+  private async readScreen(job: JobRecord): Promise<{ excerpt: string; options: ScreenOption[] } | undefined> {
     if (!job.terminal_id) return undefined
     try {
       const { lines } = (await this.d.host.call(M.terminalRead, { terminalId: job.terminal_id, maxLines: 400 })) as {
         lines: string[]
       }
-      return buildExcerpt(lines)
+      return { excerpt: buildExcerpt(lines), options: detectOptions(lines) }
     } catch {
       return undefined
     }
+  }
+
+  private async readExcerpt(job: JobRecord): Promise<string | undefined> {
+    return (await this.readScreen(job))?.excerpt
   }
 
   private async getJob(linkId: string, jobId: string): Promise<CommandResult> {
@@ -301,7 +317,8 @@ export class JobManager {
     const closed = job.phase === 'stopped' || job.phase === 'gone' || job.phase === 'failed'
     const state: JobState =
       job.phase === 'failed' ? 'failed' : closed ? 'stopped' : orca ? mapState(orca, job.outcome ?? undefined) : 'unknown'
-    const excerpt = closed ? '' : ((await this.readExcerpt(job)) ?? '')
+    const screen = closed ? undefined : await this.readScreen(job)
+    const excerpt = screen?.excerpt ?? ''
     const data: Record<string, unknown> = {
       state,
       orca_state: orca ?? 'unknown',
@@ -309,6 +326,7 @@ export class JobManager {
       updated_at: job.updated_at
     }
     if (job.outcome) data.outcome = job.outcome
+    if (state === 'waiting_user' && screen?.options.length) data.options = screen.options
     return { ok: true, data }
   }
 
@@ -329,7 +347,7 @@ export class JobManager {
     }
   }
 
-  private async send(linkId: string, a: { job_id: string; text: string; enter: boolean }): Promise<CommandResult> {
+  private async send(linkId: string, a: { job_id: string; text?: string; enter?: boolean; option?: number }): Promise<CommandResult> {
     const own = this.own(linkId, a.job_id)
     if ('error' in own) return own.error
     const job = own.job
@@ -354,14 +372,24 @@ export class JobManager {
       return fail('forbidden', 'could not verify the terminal')
     }
     try {
-      await this.d.cli.send(job.terminal_id, a.text, a.enter)
+      // An option is a digit alone, never followed by Enter: the selector takes it as the choice.
+      if (a.option !== undefined) await this.d.cli.send(job.terminal_id, String(a.option), false)
+      else await this.d.cli.send(job.terminal_id, a.text ?? '', a.enter === true)
       // A reply starts a new turn: its stable end is worth a notice even if it equals the last one.
       job.last_emitted = null
       job.last_hash = null
       void this.d.store.saveJobs(linkId)
-      this.log('send', { link_id: linkId, job_id: job.job_id, text_bytes: Buffer.byteLength(a.text) })
+      this.log('send', { link_id: linkId, job_id: job.job_id, text_bytes: Buffer.byteLength(a.text ?? ''), option: a.option })
       return { ok: true, data: { accepted: true } }
     } catch (error) {
+      const cliCode = (error as { cliCode?: unknown }).cliCode
+      if (typeof cliCode === 'string') this.log('send.cli_error', { link_id: linkId, job_id: job.job_id, error_code: cliCode })
+      if (errorCode(error) === 'needs_option' && a.option === undefined) {
+        // Typing into a selector is not reliable and is not retried: say which numbers it takes.
+        const options = (await this.readScreen(job))?.options ?? []
+        return fail('needs_option', 'the agent shows a selector: answer with the number of an option', { options })
+      }
+      if (errorCode(error) === 'needs_option') return fail('forbidden', 'the agent did not accept the option')
       return mapHostError(error)
     }
   }
@@ -397,9 +425,9 @@ export class JobManager {
     this.d.store.pruneJobs(job.link_id)
   }
 
-  private emitStatus(job: JobRecord, state: JobState, excerpt?: string): void {
+  private emitStatus(job: JobRecord, state: JobState, excerpt?: string, options: ScreenOption[] = []): void {
     job.last_emitted = state
-    job.last_hash = excerptHash(state, job.orca_state, excerpt)
+    job.last_hash = excerptHash(state, job.orca_state, excerpt, options)
     const event: JobEvent = {
       kind: 'job.status',
       job_id: job.job_id,
@@ -409,6 +437,7 @@ export class JobManager {
     }
     if (job.outcome) event.outcome = job.outcome
     if (excerpt && EXCERPT_STATES.has(state)) event.excerpt = excerpt
+    if (state === 'waiting_user' && options.length) event.options = options
     this.log('job.status', { link_id: job.link_id, job_id: job.job_id, state })
     this.d.publish(job.link_id, event)
   }
@@ -442,15 +471,17 @@ export class JobManager {
     const job = this.d.store.jobsOf(linkId)[jobId]
     if (!job || job.phase !== 'running' || !job.orca_state) return
     const state = mapState(job.orca_state, job.outcome ?? undefined)
-    const excerpt = EXCERPT_STATES.has(state) ? await this.readExcerpt(job) : undefined
+    const screen = EXCERPT_STATES.has(state) ? await this.readScreen(job) : undefined
+    const excerpt = screen?.excerpt
+    const options = state === 'waiting_user' ? (screen?.options ?? []) : []
     // The state may have moved while the terminal was read.
     if (job.phase !== 'running' || this.timers.has(jobId)) return
     if (mapState(job.orca_state ?? 'done', job.outcome ?? undefined) !== state) return
     // Dedupe by (state, Orca state, normalized excerpt): a new question is a new event; the same
     // screen with other timers or spinner frames is not. A state change is always reported, so the
     // skill's view of the job never goes stale.
-    if (state === job.last_emitted && excerptHash(state, job.orca_state, excerpt) === job.last_hash) return
-    this.emitStatus(job, state, excerpt)
+    if (state === job.last_emitted && excerptHash(state, job.orca_state, excerpt, options) === job.last_hash) return
+    this.emitStatus(job, state, excerpt, options)
     await this.d.store.saveJobs(linkId)
     this.d.changed()
   }
@@ -510,7 +541,7 @@ function startData(job: JobRecord): Record<string, unknown> {
   return data
 }
 
-/** Identity of a report: state, Orca's own state (a permission is not a question) and the excerpt. */
-function excerptHash(state: string, orca: string | null, excerpt: string | undefined): string {
-  return createHash('sha256').update(`${state}\n${orca ?? ''}\n${EXCERPT_STATES.has(state as JobState) ? normalizeExcerpt(excerpt ?? '') : ''}`).digest('hex').slice(0, 16)
+/** Identity of a report: state, Orca's own state (a permission is not a question), the excerpt and the options. */
+function excerptHash(state: string, orca: string | null, excerpt: string | undefined, options: ScreenOption[] = []): string {
+  return createHash('sha256').update(`${state}\n${orca ?? ''}\n${EXCERPT_STATES.has(state as JobState) ? normalizeExcerpt(excerpt ?? '') : ''}\n${options.map((o) => `${o.n}:${o.label}`).join('|')}`).digest('hex').slice(0, 16)
 }
