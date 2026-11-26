@@ -110,9 +110,9 @@ When the agent shows a numbered selector (Claude Code's question and permission 
 
 ### Replying: `send`
 
-`send` takes exactly one of `text` (with `enter`) or `option` (an integer 1 to 9). An `option` types only that digit, with no Enter, which picks that option in a selector. Typing text into a selector is not reliable, so when the Orca CLI refuses with `agent_prompt_blocked` the plugin does not retry: it answers `needs_option` with `details.options` (the options detected on screen, possibly empty). Any other CLI failure is mapped to a code of the contract (`not_found`, `forbidden`, `invalid_args`, `timeout`, `orca_unavailable`) with a message that says what happened; the CLI's own code goes to the log as `error_code`.
+`send` takes exactly one of `text` (with `enter`) or `option` (an integer 1 to 9). An `option` types only that digit, with no Enter, which picks that option in a selector; it is refused (`invalid_args`, with `details.options`) unless that number is shown in a selector on screen. Typing text into a selector is not reliable, so when the Orca CLI refuses with `agent_prompt_blocked` the plugin does not retry: it answers `needs_option` with `details.options` (the options detected on screen, possibly empty). Any other CLI failure is mapped to a code of the contract (`not_found`, `forbidden`, `invalid_args`, `timeout`, `orca_unavailable`) with a message that says what happened; the CLI's own code goes to the log as `error_code`.
 
-Upgrading from 0.2.x: the dedupe hash stored with a running job was computed without normalizing, so each such job may send one repeated notice, once.
+Upgrading from 0.2.x or 0.3.x: the dedupe hash stored with a running job has another format, so each such job may send one repeated notice, once.
 
 ## Tested platforms
 
@@ -256,7 +256,7 @@ Si el agente muestra un selector numerado (preguntas y permisos de Claude Code),
 
 ### Responder: `send`
 
-`send` admite exactamente uno de `text` (con `enter`) u `option` (entero de 1 a 9). Una `option` escribe solo ese dígito, sin Enter, y elige esa opción en un selector. Escribir texto en un selector no es fiable: si la CLI de Orca responde `agent_prompt_blocked`, el plugin no reintenta y devuelve `needs_option` con `details.options` (las opciones detectadas, posiblemente vacías). Cualquier otro fallo de la CLI se traduce a un código del contrato con un mensaje útil; el código de la CLI va al log como `error_code`.
+`send` admite exactamente uno de `text` (con `enter`) u `option` (entero de 1 a 9). Una `option` escribe solo ese dígito, sin Enter, y elige esa opción en un selector; se rechaza (`invalid_args`, con `details.options`) si ese número no aparece en un selector en pantalla. Escribir texto en un selector no es fiable: si la CLI de Orca responde `agent_prompt_blocked`, el plugin no reintenta y devuelve `needs_option` con `details.options` (las opciones detectadas, posiblemente vacías). Cualquier otro fallo de la CLI se traduce a un código del contrato con un mensaje útil; el código de la CLI va al log como `error_code`.
 
 ## Plataformas probadas
 

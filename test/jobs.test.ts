@@ -376,6 +376,15 @@ test('send takes text or an option, exactly one; an option is a bare digit witho
   for (const option of [0, 10, 1.5, '2', -1, null]) assert.equal(await code({ option }), 'invalid_args', String(option))
   assert.equal(await code({ option: 2, enter: true }), 'invalid_args')
   assert.equal(h.execCalls.filter((c) => c.args[1] === 'send').length, 0)
+  // no selector on screen: nothing is typed
+  const sendsNow = () => h.execCalls.filter((c) => c.args[1] === 'send').length
+  const before = sendsNow()
+  const none = await h.skill.command('link-a', 'send', { job_id: JOB1, option: 2 })
+  assert.equal(none.error.code, 'invalid_args')
+  assert.deepEqual(none.error.details, { options: [] })
+  assert.equal(sendsNow(), before, 'nothing was typed')
+  h.host.handlers['terminal.read'] = () => ({ lines: F.claudeSelectorDescriptions, truncated: false })
+  assert.equal((await h.skill.command('link-a', 'send', { job_id: JOB1, option: 7 })).error.code, 'invalid_args', 'not among the 3 shown')
   const ok = await h.skill.command('link-a', 'send', { job_id: JOB1, option: 2 })
   assert.deepEqual(ok.data, { accepted: true })
   assert.deepEqual(h.execCalls.at(-1)!.args, ['terminal', 'send', '--terminal', 'term_1', '--text=2', '--json'])
@@ -384,6 +393,18 @@ test('send takes text or an option, exactly one; an option is a bare digit witho
   await new Promise((r) => setTimeout(r, 150))
   h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_1', state: 'blocked', title: 't', agent: 'claude', stateStartedAt: 1 }] })
   assert.equal(await code({ option: 1 }), 'forbidden')
+})
+
+test('a CLI that still says agent_prompt_blocked to an option is reported as forbidden', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  await h.skill.command('link-a', 'start_job', start(JOB1))
+  h.agentEvent('term_1', 'waiting')
+  await new Promise((r) => setTimeout(r, 150))
+  h.host.handlers['terminal.read'] = () => ({ lines: F.claudeSelectorSimple, truncated: false })
+  h.sendFails = 'agent_prompt_blocked'
+  assert.equal((await h.skill.command('link-a', 'send', { job_id: JOB1, option: 1 })).error.code, 'forbidden')
 })
 
 test('agent_prompt_blocked on text answers needs_option with the detected options, and is not retried', async () => {
@@ -419,7 +440,7 @@ test('CLI failures map to contract codes with a useful message, never a mute int
     not_writable: 'forbidden',
     runtime_unavailable: 'orca_unavailable',
     invalid_argument: 'invalid_args',
-    some_new_code: 'orca_unavailable'
+    some_new_code: 'internal'
   }
   for (const [cli, want] of Object.entries(expected)) {
     h.sendFails = cli

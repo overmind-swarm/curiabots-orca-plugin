@@ -136,10 +136,11 @@ export class OrcaCli {
     try {
       out = await this.exec(info.path, args, CLI_TIMEOUT_MS)
     } catch (error) {
-      this.checkedAt = 0
       const e = error as { killed?: boolean; signal?: string; stdout?: unknown; stderr?: unknown }
       if (e.killed || e.signal === 'SIGTERM') throw cliError('timeout', 'the Orca CLI timed out')
-      throw cliFailure(cliCodeOf(e.stdout, e.stderr))
+      const code = cliCodeOf(e.stdout, e.stderr)
+      if (!code) this.checkedAt = 0 // a failure with no code may mean the CLI itself is gone: probe it again
+      throw cliFailure(code)
     }
     let parsed: { ok?: unknown } | null = null
     try {
@@ -185,7 +186,7 @@ export function cliFailure(cliCode: string | null): Error {
   if (/unavailable|not_running|runtime|connection|econn/.test(cliCode)) {
     return done('orca_unavailable', `Orca is not available (${cliCode})`)
   }
-  return done('orca_unavailable', `the Orca CLI refused the request (${cliCode})`)
+  return done('internal', `the Orca CLI refused the request with an unknown code (${cliCode})`)
 }
 
 function cliError(code: string, message: string): Error {

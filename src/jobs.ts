@@ -371,6 +371,14 @@ export class JobManager {
       if (errorCode(error) === 'cli_unavailable') return mapHostError(error)
       return fail('forbidden', 'could not verify the terminal')
     }
+    if (a.option !== undefined) {
+      // A digit typed where no selector shows it would sit in the input box and corrupt the next reply.
+      const options = (await this.readScreen(job))?.options ?? []
+      if (!options.some((o) => o.n === a.option)) {
+        this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'option_not_on_screen' })
+        return fail('invalid_args', `the screen shows no option ${a.option}`, { options })
+      }
+    }
     try {
       // An option is a digit alone, never followed by Enter: the selector takes it as the choice.
       if (a.option !== undefined) await this.d.cli.send(job.terminal_id, String(a.option), false)

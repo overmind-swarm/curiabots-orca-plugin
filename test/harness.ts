@@ -22,8 +22,8 @@ export interface Harness {
   execCalls: { file: string; args: string[] }[]
   states: PanelState[]
   /** What `orca terminal show` reports for any terminal. */
-  /** Makes `orca terminal send` fail like the real CLI does: JSON on stdout and a non-zero exit. */
   sendFails: string | null
+  /** `sendFails` makes `orca terminal send` fail like the real CLI: JSON on stdout and a non-zero exit. */
   showReply: { agentIdentity: string | null; connected: boolean; writable: boolean }
   restart(): Promise<Plugin>
   restartWith(start: (plugin: Plugin) => Promise<void>): Promise<Plugin>
