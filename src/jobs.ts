@@ -411,8 +411,26 @@ export class JobManager {
     try {
       await this.d.host.call(M.terminalClose, { terminalId: job.terminal_id })
     } catch (error) {
-      // Already closed by hand: the goal is reached. Anything else is a real failure.
       if (errorCode(error) !== 'action_failed') return mapHostError(error)
+      // `action_failed` means "closed already" OR "not a terminal this plugin owns" (Orca only lets a
+      // plugin close the terminals it opened, and forgets them when the plugin is updated, disabled or
+      // removed). Never take it for success: look at what Orca really has.
+      const presence = await this.terminalPresence(job)
+      if (presence !== 'absent') {
+        this.log('stop.cli_fallback', { link_id: linkId, job_id: job.job_id, presence })
+        try {
+          await this.d.cli.close(job.terminal_id)
+        } catch (cliError) {
+          if (errorCode(cliError) !== 'not_found') {
+            this.log('stop.failed', { link_id: linkId, job_id: job.job_id, error_code: errorCode(cliError) })
+            const cli = mapHostError(cliError)
+            // The terminal is alive and could not be closed: say so, keep the job running.
+            return cli.ok === false && cli.error.code === 'internal'
+              ? fail('forbidden', 'Orca does not let this plugin close the terminal now: close it in Orca')
+              : cli
+          }
+        }
+      }
     }
     this.close(job, 'stopped')
     this.emitStatus(job, 'stopped', excerpt)
@@ -513,22 +531,73 @@ export class JobManager {
     this.d.changed()
   }
 
-  /** Catches what happened while the worker was down or an event was missed. */
+  /**
+   * Is the job's terminal alive in Orca? `absent` only when Orca answered and neither `terminal.list` nor
+   * `agents.list` of the job's workspace names it; any failure or truncated list is `unknown`.
+   * Correlates by terminal id, inside the job's workspace.
+   */
+  private async terminalPresence(job: JobRecord): Promise<'present' | 'absent' | 'unknown'> {
+    if (!job.workspace_id || !job.terminal_id) return 'unknown'
+    let truncated = false
+    try {
+      const out = (await this.d.host.call(M.terminalList, { workspaceId: job.workspace_id })) as {
+        terminals: { id: string }[]
+        truncated?: boolean
+      }
+      if (out.terminals.some((t) => t.id === job.terminal_id)) return 'present'
+      truncated = out.truncated === true
+    } catch {
+      return 'unknown'
+    }
+    try {
+      const { agents } = (await this.d.host.call(M.agentsList, { workspaceId: job.workspace_id })) as {
+        agents: { terminalId: string | null }[]
+      }
+      if (agents.some((a) => a.terminalId === job.terminal_id)) return 'present'
+    } catch {
+      return 'unknown'
+    }
+    return truncated ? 'unknown' : 'absent'
+  }
+
+  /**
+   * Catches what happened while the worker was down (an update restarts it) or an event was missed.
+   * Orca is the source of truth: a job is `gone` only if its workspace no longer exists, `stopped` only
+   * if its terminal no longer exists, and otherwise it is followed again from the agent's current state.
+   * Whatever cannot be checked (a failed or truncated list) is left as it is: never guess.
+   */
   async reconcile(): Promise<void> {
+    const pending = this.d.store.links.some((link) =>
+      Object.values(this.d.store.jobsOf(link.link_id)).some((j) => j.phase === 'running' && j.workspace_id && j.terminal_id)
+    )
+    if (!pending) return
+    let workspaces: Set<string>
+    let complete: boolean
+    try {
+      const listed = (await this.d.host.call(M.workspaceList, {})) as { workspaces: { id: string }[]; truncated?: boolean }
+      workspaces = new Set(listed.workspaces.map((w) => w.id))
+      // A truncated list proves nothing about a workspace that is missing from it.
+      complete = listed.truncated !== true
+    } catch (error) {
+      this.log('reconcile.workspace_list_failed', { error_code: errorCode(error) })
+      return
+    }
     for (const link of [...this.d.store.links]) {
       for (const job of Object.values(this.d.store.jobsOf(link.link_id))) {
         if (job.phase !== 'running' || !job.workspace_id || !job.terminal_id) continue
         if (this.d.now() - job.created_at < this.d.timing.graceMs) continue
-        try {
-          const { terminals } = (await this.d.host.call(M.terminalList, { workspaceId: job.workspace_id })) as {
-            terminals: { id: string }[]
-          }
-          if (!terminals.some((t) => t.id === job.terminal_id)) {
-            this.markGone(job, 'terminal_closed')
-            continue
-          }
-        } catch (error) {
-          if (errorCode(error) === 'action_failed') this.markGone(job, 'workspace_missing')
+        if (!workspaces.has(job.workspace_id)) {
+          if (complete) this.markGone(job, 'workspace_missing')
+          continue
+        }
+        const presence = await this.terminalPresence(job)
+        if (presence === 'unknown' || job.phase !== 'running') continue
+        if (presence === 'absent') {
+          this.close(job, 'stopped')
+          this.emitStatus(job, 'stopped')
+          this.log('job.stopped_terminal_closed', { link_id: job.link_id, job_id: job.job_id })
+          await this.d.store.saveJobs(job.link_id)
+          this.d.changed()
           continue
         }
         const orca = await this.currentOrcaState(job)

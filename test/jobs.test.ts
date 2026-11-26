@@ -252,18 +252,17 @@ test('send without a working CLI answers cli_unavailable and hello does not anno
   assert.equal(r.error.code, 'cli_unavailable')
 })
 
-test('a vanished terminal or removed workspace emits job.gone', async () => {
+test('a removed workspace emits job.gone', async () => {
   h = await setup()
   await h.link('link-a', 'tok_' + 'a'.repeat(40))
   await h.allow('link-a')
   await h.skill.command('link-a', 'start_job', start(JOB1))
   await h.skill.command('link-a', 'start_job', start(JOB2))
-  h.host.handlers['terminal.list'] = (p) =>
-    String(p.workspaceId).endsWith('ws-1') ? { terminals: [], truncated: false } : { terminals: [{ id: 'term_2' }], truncated: false }
+  h.workspaces.delete('identity:wt2:local:ws-1')
   await h.plugin.jobs.reconcile()
   await until(() => h.skill.events('link-a').some((e) => e.event.kind === 'job.gone'))
   const gone = h.skill.events('link-a').find((e) => e.event.kind === 'job.gone')
-  assert.deepEqual(gone.event, { kind: 'job.gone', job_id: JOB1, reason: 'terminal_closed' })
+  assert.deepEqual(gone.event, { kind: 'job.gone', job_id: JOB1, reason: 'workspace_missing' })
   h.plugin.onWorkspaceRemoved({ workspaceListId: 'identity:wt2:local:ws-2' })
   await until(() => h.skill.events('link-a').filter((e) => e.event.kind === 'job.gone').length === 2)
   assert.equal(h.plugin.jobs.activeCount(), 0)
@@ -490,4 +489,127 @@ test('start_job is persisted as in progress BEFORE workspace.create', async () =
   assert.equal(seen.phase, 'creating')
   await h.plugin.store.flush()
   assert.equal((h.host.store.get('jobs:link-a') as any)[JOB1].phase, 'running')
+})
+
+// ---- restart / update of the worker (0.4.4) -------------------------------------------------------
+
+const notOwned = () => Object.assign(new Error('not one of this plugin\'s terminals'), { code: 'action_failed' })
+const kinds = () => h.skill.events('link-a').map((e) => e.event.kind + ':' + (e.event.state ?? e.event.reason))
+
+async function twoJobsThenRestart() {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  await h.skill.command('link-a', 'start_job', start(JOB1))
+  await h.skill.command('link-a', 'start_job', start(JOB2))
+  h.agentEvent('term_1', 'done', { mainAgent: { state: 'done', outcome: 'success' } })
+  h.agentEvent('term_2', 'waiting')
+  await until(() => ['idle', 'waiting_user'].every((st) => h.skill.events('link-a').some((e) => e.event.state === st)))
+}
+
+test('a restart with live terminals and workspaces emits nothing and keeps following the jobs', async () => {
+  await twoJobsThenRestart()
+  const before = h.skill.events('link-a').length
+  h.host.handlers['agents.list'] = () => ({
+    agents: [
+      { terminalId: 'term_1', state: 'done', title: 't', agent: 'claude', stateStartedAt: 1 },
+      { terminalId: 'term_2', state: 'working', title: 't', agent: 'claude', stateStartedAt: 1 }
+    ]
+  })
+  await h.restart()
+  await h.plugin.jobs.reconcile()
+  await new Promise((r) => setTimeout(r, 250))
+  assert.equal(h.plugin.jobs.activeCount(), 2)
+  const events = h.skill.events('link-a').slice(before)
+  assert.equal(events.some((e) => e.event.kind === 'job.gone' || e.event.state === 'stopped'), false, kinds().join(','))
+  // job 2 moved while the worker was down: it is followed again (and reported), not closed
+  assert.equal(events.at(-1)?.event.state, 'working')
+  assert.equal(h.host.callsOf('terminal.close').length, 0)
+})
+
+test('a restart correlates by terminal id through agents.list when terminal.list does not show it', async () => {
+  await twoJobsThenRestart()
+  h.host.handlers['terminal.list'] = () => ({ terminals: [], truncated: false })
+  h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_1', state: 'done', title: 't', agent: 'claude', stateStartedAt: 1 }] })
+  await h.restart()
+  await h.plugin.jobs.reconcile()
+  assert.equal(h.plugin.store.jobsOf('link-a')[JOB1]!.phase, 'running')
+  assert.equal(h.plugin.store.jobsOf('link-a')[JOB2]!.phase, 'stopped', 'terminal is nowhere: closed')
+})
+
+test('a restart marks gone only the job whose workspace vanished and stopped only the one whose terminal vanished', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  for (const j of [JOB1, JOB2, JOB3]) await h.skill.command('link-a', 'start_job', start(j))
+  h.workspaces.delete('identity:wt2:local:ws-1') // JOB1: workspace removed
+  h.host.handlers['terminal.list'] = (p) =>
+    String(p.workspaceId).endsWith('ws-2') ? { terminals: [], truncated: false } : { terminals: [{ id: 'term_3' }], truncated: false } // JOB2: terminal closed
+  await h.restart()
+  await h.plugin.jobs.reconcile()
+  await until(() => h.skill.events('link-a').filter((e) => e.event.kind === 'job.gone' || e.event.state === 'stopped').length === 2)
+  assert.deepEqual(kinds().filter((k) => /gone|stopped/.test(k)).sort(), ['job.gone:workspace_missing', 'job.status:stopped'])
+  const jobs = h.plugin.store.jobsOf('link-a')
+  assert.deepEqual([jobs[JOB1]!.phase, jobs[JOB2]!.phase, jobs[JOB3]!.phase], ['gone', 'stopped', 'running'])
+})
+
+test('reconcile never guesses: failed or truncated listings change nothing', async () => {
+  await twoJobsThenRestart()
+  const before = h.skill.events('link-a').length
+  await h.restart()
+  const run = async () => {
+    await h.plugin.jobs.reconcile()
+    assert.deepEqual(Object.values(h.plugin.store.jobsOf('link-a')).map((j) => j.phase), ['running', 'running'])
+  }
+  const list = h.host.handlers['workspace.list']!
+  h.host.handlers['workspace.list'] = () => {
+    throw notOwned()
+  }
+  await run()
+  h.host.handlers['workspace.list'] = () => ({ workspaces: [], truncated: true })
+  await run()
+  h.host.handlers['workspace.list'] = list
+  h.host.handlers['terminal.list'] = () => {
+    throw notOwned()
+  }
+  await run()
+  h.host.handlers['terminal.list'] = () => ({ terminals: [], truncated: true })
+  await run()
+  assert.equal(h.skill.events('link-a').length, before, 'no new events')
+})
+
+test('stop on a terminal the plugin no longer owns closes it through the CLI, and only that job\'s terminal', async () => {
+  await twoJobsThenRestart()
+  await h.restart()
+  await until(() => (h as any).statusOf('link-a') === 'online', 3000, 'online again')
+  h.host.handlers['terminal.close'] = () => {
+    throw notOwned()
+  }
+  const r = await h.skill.command('link-a', 'stop', { job_id: JOB1 })
+  assert.deepEqual(r.data, { stopped: true })
+  const closes = h.execCalls.filter((c) => c.args[0] === 'terminal' && c.args[1] === 'close')
+  assert.deepEqual(closes.map((c) => c.args), [['terminal', 'close', '--terminal', 'term_1', '--json']])
+  await until(() => h.skill.events('link-a').some((e) => e.event.state === 'stopped'))
+  assert.equal(h.plugin.store.jobsOf('link-a')[JOB2]!.phase, 'running', 'the other job is untouched')
+})
+
+test('stop whose terminal is already gone is a success without the CLI; with a live terminal and a failing CLI it is an error and the job stays running', async () => {
+  await twoJobsThenRestart()
+  h.host.handlers['terminal.close'] = () => {
+    throw notOwned()
+  }
+  h.host.handlers['terminal.list'] = (p) => (String(p.workspaceId).endsWith('ws-1') ? { terminals: [], truncated: false } : { terminals: [{ id: 'term_2' }], truncated: false })
+  assert.deepEqual((await h.skill.command('link-a', 'stop', { job_id: JOB1 })).data, { stopped: true })
+  assert.equal(h.execCalls.filter((c) => c.args[1] === 'close').length, 0)
+
+  h.closeFails = 'runtime_unavailable'
+  const failed = await h.skill.command('link-a', 'stop', { job_id: JOB2 })
+  assert.equal(failed.ok, false)
+  assert.equal(failed.error.code, 'orca_unavailable')
+  assert.equal(h.plugin.store.jobsOf('link-a')[JOB2]!.phase, 'running', 'never reported stopped while the terminal lives')
+  assert.equal(h.skill.events('link-a').filter((e) => e.event.state === 'stopped').length, 1, 'only the real stop of JOB1')
+
+  h.closeFails = 'weird_refusal'
+  assert.equal((await h.skill.command('link-a', 'stop', { job_id: JOB2 })).ok, false)
+  assert.equal(h.plugin.store.jobsOf('link-a')[JOB2]!.phase, 'running')
 })

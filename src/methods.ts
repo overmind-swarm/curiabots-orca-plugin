@@ -3,6 +3,7 @@ export const M = {
   workspaceCreate: 'workspace.create',
   terminalRead: 'terminal.read',
   terminalClose: 'terminal.close',
+  workspaceList: 'workspace.list',
   terminalList: 'terminal.list',
   agentsList: 'agents.list',
   projectList: 'project.list',

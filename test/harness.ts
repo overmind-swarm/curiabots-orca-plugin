@@ -23,6 +23,10 @@ export interface Harness {
   states: PanelState[]
   /** What `orca terminal show` reports for any terminal. */
   sendFails: string | null
+  /** Makes `orca terminal close` fail like the real CLI (JSON on stdout, non-zero exit) with this code. */
+  closeFails: string | null
+  /** Workspaces `workspace.list` reports; `workspace.create` adds to it. */
+  workspaces: Set<string>
   /** `sendFails` makes `orca terminal send` fail like the real CLI: JSON on stdout and a non-zero exit. */
   showReply: { agentIdentity: string | null; connected: boolean; writable: boolean }
   restart(): Promise<Plugin>
@@ -39,6 +43,7 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
   const host = new FakeHost()
   host.settingValues = { serviceUrl: skill.baseUrl }
   let n = 0
+  const workspaces = new Set<string>()
   host.handlers = {
     'project.list': () => ({
       projects: [
@@ -51,8 +56,13 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
     }),
     'workspace.create': () => {
       n++
+      workspaces.add(`identity:wt2:local:ws-${n}`)
       return { workspaceId: `identity:wt2:local:ws-${n}`, terminalId: `term_${n}` }
     },
+    'workspace.list': () => ({
+      workspaces: [...workspaces].map((id) => ({ id, kind: 'worktree', path: '/wt/' + id, branch: null, hostId: 'local' })),
+      truncated: false
+    }),
     'terminal.read': () => ({ lines: ['', 'building...', '\u001b[32mdone\u001b[0m', ''], truncated: false }),
     'terminal.close': () => ({ closed: true }),
     'terminal.list': (p) => ({ terminals: [{ id: 'term_' + String(p.workspaceId).split('ws-')[1] }], truncated: false }),
@@ -70,6 +80,12 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
     if (args[0] === 'terminal' && args[1] === 'send' && h.sendFails) {
       throw Object.assign(new Error('Command failed'), {
         stdout: JSON.stringify({ ok: false, error: { code: h.sendFails, message: 'refused' } }),
+        stderr: ''
+      })
+    }
+    if (args[0] === 'terminal' && args[1] === 'close' && h.closeFails) {
+      throw Object.assign(new Error('Command failed'), {
+        stdout: JSON.stringify({ ok: false, error: { code: h.closeFails, message: 'refused' } }),
         stderr: ''
       })
     }
@@ -99,6 +115,8 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
     execCalls,
     states,
     sendFails: null,
+    closeFails: null,
+    workspaces,
     showReply: { agentIdentity: 'claude', connected: true, writable: true },
     async restart() {
       h.plugin.dispose()

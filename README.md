@@ -30,7 +30,7 @@ Orca installs the newest `vX.Y.Z` tag and shows the permissions the plugin asks 
 | `agent:launch` | Start the agent (Claude Code, Codex...) in that worktree with the instruction. |
 | `agent:read` | Hear when the agent starts working, waits for you or finishes. |
 | `terminal:read` | Read a bounded excerpt of the job's terminal output to include in notices and `read_output`. |
-| `terminal:send` | Close a job's terminal (`stop`). Replies use the Orca CLI instead, because the plugin API cannot type into terminals outside the active worktree. |
+| `terminal:send` | Close a job's terminal (`stop`). Replies use the Orca CLI instead, because the plugin API cannot type into terminals outside the active worktree. After an update Orca no longer lets the plugin close terminals it opened earlier; `stop` then closes that job's terminal (only that one) with `orca terminal close`, or answers with an error and leaves the job running. |
 | `secrets:own` | Keep the link token in Orca's encrypted file for this plugin. |
 | `storage:own` | Keep the installation id, links, jobs and the outbox of pending notices. |
 | `settings:own` | Read the plugin settings. |
@@ -183,7 +183,7 @@ Orca instala el tag `vX.Y.Z` más reciente y te enseña los permisos que pide el
 | `agent:launch` | Arrancar el agente (Claude Code, Codex...) en ese worktree con la instrucción. |
 | `agent:read` | Saber cuándo el agente trabaja, espera o termina. |
 | `terminal:read` | Leer un extracto acotado de la salida de la terminal del job para los avisos y `read_output`. |
-| `terminal:send` | Cerrar la terminal de un job (`stop`). Las respuestas usan la CLI de Orca porque la API del plugin no puede escribir en terminales fuera del worktree activo. |
+| `terminal:send` | Cerrar la terminal de un job (`stop`). Las respuestas usan la CLI de Orca porque la API del plugin no puede escribir en terminales fuera del worktree activo. Tras una actualización Orca ya no deja al plugin cerrar las terminales que abrió antes; entonces `stop` cierra la terminal de ese job (solo esa) con `orca terminal close`, o responde con un error y deja el job en marcha. |
 | `secrets:own` | Guardar el token de vinculación en el fichero cifrado de Orca para este plugin. |
 | `storage:own` | Guardar el identificador de instalación, las vinculaciones, los jobs y la cola de avisos pendientes. |
 | `settings:own` | Leer los ajustes del plugin. |

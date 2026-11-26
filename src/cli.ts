@@ -119,6 +119,35 @@ export class OrcaCli {
   }
 
   /**
+   * `orca terminal close --terminal <id>`: the fallback of `stop` for a terminal the plugin API refuses to
+   * close (one this plugin no longer owns, for example after an update or a reinstall). Same error
+   * mapping as `send`; a terminal that no longer exists is not an error for the caller to decide here:
+   * it throws `not_found`.
+   */
+  async close(terminalId: string): Promise<void> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(terminalId)) throw cliError('internal', 'bad terminal id')
+    let info = await this.resolve()
+    if (!info) info = await this.resolve(true)
+    if (!info) throw cliError('cli_unavailable', 'the Orca CLI was not found')
+    let out: ExecResult
+    try {
+      out = await this.exec(info.path, ['terminal', 'close', '--terminal', terminalId, '--json'], CLI_TIMEOUT_MS)
+    } catch (error) {
+      const e = error as { killed?: boolean; signal?: string; stdout?: unknown; stderr?: unknown }
+      if (e.killed || e.signal === 'SIGTERM') throw cliError('timeout', 'the Orca CLI timed out')
+      const code = cliCodeOf(e.stdout, e.stderr)
+      if (!code) this.checkedAt = 0
+      throw cliFailure(code)
+    }
+    try {
+      if ((JSON.parse(out.stdout) as { ok?: unknown }).ok === false) throw cliFailure(cliCodeOf(out.stdout, out.stderr))
+    } catch (error) {
+      if (error instanceof SyntaxError) return // not JSON: exit status 0 is enough
+      throw error
+    }
+  }
+
+  /**
    * `orca terminal send`: `text` (optionally followed by Enter). Throws an error whose `code` is already
    * a code of the contract (`cli_unavailable`, `timeout`, `needs_option`, `forbidden`...) and whose
    * `cliCode` is the CLI's own, for logs.
