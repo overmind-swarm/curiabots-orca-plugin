@@ -675,6 +675,13 @@ test('send while the agent works: typed after the same proofs; never on a permis
   assert.equal(sends(), 1)
   h.host.handlers['terminal.read'] = () => ({ lines: ['building...'], truncated: false })
 
+  // mid-turn, text without Enter is never typed: only `--text … --enter` is refused by the CLI on a selector
+  live('working')
+  const noEnter = await h.skill.command('link-a', 'send', { job_id: JOB1, text: '1', enter: false })
+  assert.equal(noEnter.error.code, 'forbidden')
+  assert.match(noEnter.error.message, /always sent with Enter/)
+  assert.equal(sends(), 1)
+
   // only verified agents take a message mid-turn (contract §1): Codex steers, others are unverified
   await h.skill.command('link-a', 'start_job', start(JOB2, { agent: 'codex' }))
   h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_2', state: 'working', title: 't', agent: 'codex', stateStartedAt: 1 }] })

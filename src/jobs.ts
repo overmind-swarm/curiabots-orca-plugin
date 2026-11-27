@@ -383,6 +383,12 @@ export class JobManager {
       this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'option_not_waiting' })
       return fail('forbidden', 'an option only answers a question the agent is asking; nothing was typed')
     }
+    if (orca === 'working' && a.option === undefined && a.enter !== true) {
+      // Only `--text … --enter` is refused by the CLI on a selector (agent_prompt_blocked). Text without Enter would be
+      // typed into a permission prompt drawn after the last check, and a digit there approves it.
+      this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_without_enter' })
+      return fail('forbidden', 'while the agent works a message is always sent with Enter; nothing was typed')
+    }
     if (orca === 'working' && !WORKING_SEND_AGENTS.has(String(job.agent ?? '').toLowerCase())) {
       this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_agent_unverified' })
       return fail('forbidden', 'sending while this agent works is not supported; wait until it asks or finishes its turn')
