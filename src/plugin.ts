@@ -178,6 +178,7 @@ export class Plugin {
       projectRefs: () => this.projectRefsOf(link.link_id),
       onWelcome: (info) => this.onWelcome(link.link_id, info),
       onCommand: (name, args, limits) => this.jobs.handle(link.link_id, name, args, limits),
+      onArchived: (jobIds) => this.jobs.setArchived(link.link_id, jobIds),
       onChange: () => this.changed(),
       onRevoked: (reason) => void this.onRevoked(link.link_id, reason)
     })

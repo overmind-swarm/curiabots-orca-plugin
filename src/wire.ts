@@ -54,6 +54,7 @@ export type JobEvent =
   | { kind: 'job.gone'; job_id: string; reason: string }
 
 export interface Limits {
+  /** The user's cap of simultaneous jobs of this link, from the skill. `0` is no limit; absent means the skill said nothing. */
   max_jobs?: number
   max_prompt_bytes?: number
 }
@@ -108,6 +109,10 @@ export type ServerMessage =
       link_name?: string
       limits: Limits
     }
+  /** The user changed the cap while the plugin was connected: it replaces the one in `welcome`. */
+  | { type: 'limits'; limits: Limits }
+  /** The jobs of this link the skill has archived: they no longer occupy a slot. Always the complete set. */
+  | { type: 'archived'; job_ids: string[] }
   | { type: 'command'; id: string; name: string; args: unknown }
   | { type: 'ack'; seq: number }
   | { type: 'revoked'; reason: string }
@@ -139,6 +144,22 @@ function posInt(value: unknown, max: number): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? Math.min(value, max) : undefined
 }
 
+/** Most jobs a cap can ask for; `0` (no limit) is the way to ask for more. */
+const MAX_JOBS_CAP = 1000
+/** Most archived ids one `archived` message can carry. */
+const MAX_ARCHIVED_IDS = 500
+
+/** The `limits` object of `welcome` and of the `limits` message. `max_jobs: 0` is kept: it means no limit. */
+function parseLimits(raw: unknown): Limits {
+  const limits: Limits = {}
+  if (!isObject(raw)) return limits
+  const max = raw.max_jobs
+  if (typeof max === 'number' && Number.isInteger(max) && max >= 0) limits.max_jobs = Math.min(max, MAX_JOBS_CAP)
+  const maxPrompt = posInt(raw.max_prompt_bytes, MAX_PROMPT_BYTES)
+  if (maxPrompt) limits.max_prompt_bytes = maxPrompt
+  return limits
+}
+
 /** Parses one text frame from the skill; null means "ignore it". */
 export function parseServerMessage(raw: unknown): ServerMessage | null {
   if (typeof raw !== 'string' || byteLength(raw) > MAX_MESSAGE_BYTES) return null
@@ -152,13 +173,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
   switch (msg.type) {
     case 'welcome': {
       if (typeof msg.link_id !== 'string' || !LINK_ID.test(msg.link_id)) return null
-      const limits: Limits = {}
-      if (isObject(msg.limits)) {
-        const maxJobs = posInt(msg.limits.max_jobs, 1000)
-        const maxPrompt = posInt(msg.limits.max_prompt_bytes, MAX_PROMPT_BYTES)
-        if (maxJobs) limits.max_jobs = maxJobs
-        if (maxPrompt) limits.max_prompt_bytes = maxPrompt
-      }
+      const limits = parseLimits(msg.limits)
       const botLabel = cleanLabel(msg.bot_label, '')
       const linkName = cleanLabel(msg.link_name, '')
       return {
@@ -168,6 +183,13 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         ...(linkName ? { link_name: linkName } : {}),
         limits
       }
+    }
+    case 'limits':
+      return { type: 'limits', limits: parseLimits(msg.limits) }
+    case 'archived': {
+      if (!Array.isArray(msg.job_ids)) return null
+      const ids = msg.job_ids.filter((id): id is string => typeof id === 'string' && JOB_ID.test(id) && !RESERVED_KEYS.has(id)).slice(0, MAX_ARCHIVED_IDS)
+      return { type: 'archived', job_ids: ids }
     }
     case 'command':
       if (typeof msg.id !== 'string' || !COMMAND_ID.test(msg.id) || typeof msg.name !== 'string') return null

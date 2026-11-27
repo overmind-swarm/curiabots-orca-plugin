@@ -69,6 +69,8 @@ export interface LinkConnectionOptions {
   projectRefs: () => Promise<ProjectRef[]>
   onWelcome: (info: { bot_label?: string; link_name?: string }) => void
   onCommand: (name: string, args: unknown, limits: Limits) => Promise<CommandResult>
+  /** The skill's complete set of this link's archived jobs (they do not occupy a slot). */
+  onArchived: (jobIds: string[]) => void
   onChange: () => void
   onRevoked: (reason: string) => void
 }
@@ -205,6 +207,15 @@ export class LinkConnection {
         this.flush(false)
         return
       }
+      case 'limits':
+        // The user changed the cap: it applies to the next start, with no reconnect. Running jobs are never touched.
+        this.limits = msg.limits
+        this.log('limits', { max_jobs: msg.limits.max_jobs ?? null })
+        this.o.onChange()
+        return
+      case 'archived':
+        this.o.onArchived(msg.job_ids)
+        return
       case 'ping':
         this.rawSend({ v: PROTOCOL_VERSION, type: 'pong' })
         return

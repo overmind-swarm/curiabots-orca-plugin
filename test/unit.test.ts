@@ -182,3 +182,23 @@ test('worktree CLI errors map to the contract without leaking file names or goin
   assert.equal(code('brand_new_code', 'text'), 'failed')
   assert.equal(code(null, ''), 'internal')
 })
+
+test('welcome and limits keep max_jobs 0 (no limit) and drop what is not a whole number from 0', () => {
+  const welcome = (max: unknown) => parseServerMessage(JSON.stringify({ v: 1, type: 'welcome', link_id: 'l-1', limits: { max_jobs: max } })) as any
+  assert.deepEqual(welcome(0).limits, { max_jobs: 0 })
+  assert.deepEqual(welcome(7).limits, { max_jobs: 7 })
+  assert.deepEqual(welcome(5000).limits, { max_jobs: 1000 }, 'a huge cap is bounded; 0 is the way to ask for none')
+  for (const bad of [-1, 1.5, '3', null, true]) assert.deepEqual(welcome(bad).limits, {}, String(bad))
+  const limits = parseServerMessage(JSON.stringify({ v: 1, type: 'limits', limits: { max_jobs: 0, max_prompt_bytes: 999999999 } }))
+  assert.deepEqual(limits, { type: 'limits', limits: { max_jobs: 0, max_prompt_bytes: 16384 } })
+  assert.deepEqual(parseServerMessage(JSON.stringify({ v: 1, type: 'limits' })), { type: 'limits', limits: {} })
+})
+
+test('archived keeps only well-formed job ids, at most 500', () => {
+  const ok = '11111111-1111-4111-8111-111111111111'
+  const msg = parseServerMessage(JSON.stringify({ v: 1, type: 'archived', job_ids: [ok, 'short', '__proto__', 7, null, ok.replace('1111', '2222')] })) as any
+  assert.deepEqual(msg, { type: 'archived', job_ids: [ok, ok.replace('1111', '2222')] })
+  assert.equal(parseServerMessage(JSON.stringify({ v: 1, type: 'archived', job_ids: 'x' })), null)
+  const many = Array.from({ length: 800 }, (_, i) => `${String(i).padStart(8, '0')}-1111-4111-8111-111111111111`)
+  assert.equal((parseServerMessage(JSON.stringify({ v: 1, type: 'archived', job_ids: many })) as any).job_ids.length, 500)
+})

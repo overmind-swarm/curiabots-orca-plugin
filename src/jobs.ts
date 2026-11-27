@@ -14,8 +14,11 @@ import { createHash } from 'node:crypto'
 import type { ErrorCode, JobEvent, JobState, Limits, OrcaState } from './wire.ts'
 import { MAX_PROMPT_BYTES, isCommandName, mapState, validateArgs } from './wire.ts'
 
-export const LOCAL_MAX_JOBS_PER_LINK = 5
-export const LOCAL_MAX_JOBS_TOTAL = 10
+/**
+ * What a link is capped at when the skill told nothing (no `max_jobs` in `welcome`): the value CuriaBots has always
+ * used. Once the skill says a number, that number rules, `0` (no limit) included: the user sets it in CuriaBots.
+ */
+export const DEFAULT_MAX_JOBS_PER_LINK = 5
 const EXCERPT_STATES = new Set<JobState>(['waiting_user', 'idle', 'failed', 'stopped'])
 const ORCA_STATES = new Set(['working', 'blocked', 'waiting', 'done'])
 /**
@@ -120,6 +123,7 @@ export class JobManager {
 
   /** Forgets a link's jobs locally (the agents keep running in Orca). */
   forgetLink(linkId: string): void {
+    this.archived.delete(linkId)
     for (const [terminal, ref] of [...this.byTerminal]) if (ref.linkId === linkId) this.byTerminal.delete(terminal)
     for (const job of Object.values(this.d.store.jobsOf(linkId))) {
       const t = this.timers.get(job.job_id)
@@ -128,12 +132,28 @@ export class JobManager {
     }
   }
 
+  /**
+   * The jobs the skill has archived, per link: they are still running in Orca (an `idle` job nobody touched for days
+   * is archived by CuriaBots, the agent stays), but the user no longer sees them, so they do not occupy a slot. The
+   * skill sends the complete set after `welcome` and whenever it changes; memory only, the skill resends it.
+   */
+  private archived = new Map<string, Set<string>>()
+
+  setArchived(linkId: string, jobIds: string[]): void {
+    this.archived.set(linkId, new Set(jobIds))
+  }
+
+  /**
+   * Jobs that occupy a slot: being created or running (starting, working, waiting for the user, idle) and not
+   * archived by the skill. Stopped, gone and failed jobs never do.
+   */
   activeCount(linkId?: string): number {
     let n = 0
     for (const link of this.d.store.links) {
       if (linkId && link.link_id !== linkId) continue
+      const archived = this.archived.get(link.link_id)
       for (const job of Object.values(this.d.store.jobsOf(link.link_id))) {
-        if (job.phase === 'creating' || job.phase === 'running') n++
+        if ((job.phase === 'creating' || job.phase === 'running') && !archived?.has(job.job_id)) n++
       }
     }
     return n
@@ -226,8 +246,9 @@ export class JobManager {
     }
     if (own.error.ok === false && own.error.error.code === 'forbidden') return own.error
 
-    const maxPerLink = Math.min(limits.max_jobs ?? LOCAL_MAX_JOBS_PER_LINK, LOCAL_MAX_JOBS_PER_LINK)
-    if (this.activeCount(linkId) >= maxPerLink || this.activeCount() >= LOCAL_MAX_JOBS_TOTAL) {
+    // The user's cap, from the skill: 0 is no limit. Lowering it never touches a running job; it only refuses this one.
+    const maxPerLink = limits.max_jobs ?? DEFAULT_MAX_JOBS_PER_LINK
+    if (maxPerLink > 0 && this.activeCount(linkId) >= maxPerLink) {
       this.log('start_job.rejected', { link_id: linkId, reason: 'limit' })
       return fail('limit_reached', 'too many active jobs')
     }

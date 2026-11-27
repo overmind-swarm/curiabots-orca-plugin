@@ -96,7 +96,7 @@ test('start_job validates its arguments', async () => {
   assert.equal(h.host.callsOf('workspace.create').length, 0)
 })
 
-test('limits: per link (from welcome, capped locally) and in total', async () => {
+test('limits: per link, from welcome', async () => {
   h = await setup()
   h.skill.welcomeLimits = { max_jobs: 2, max_prompt_bytes: 16384 }
   await h.link('link-a', 'tok_' + 'a'.repeat(40))
