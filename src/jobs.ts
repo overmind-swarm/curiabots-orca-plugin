@@ -358,23 +358,49 @@ export class JobManager {
     const job = own.job
     if (job.phase !== 'running' || !job.terminal_id) return fail('not_found', 'the job is not running')
     // Writing into a user's terminal from the cloud is the delicate operation: prove it is safe.
+    // A question (waiting) or a finished turn (done) takes the text. A turn in progress (working) takes it too:
+    // Claude Code, Codex and the other CLI agents queue what is typed meanwhile and read it when the turn ends.
+    // A permission prompt (blocked) never does: only the user resolves it, in Orca.
     const orca = await this.currentOrcaState(job)
-    if (orca !== 'waiting' && orca !== 'done') {
+    if (orca !== 'waiting' && orca !== 'done' && orca !== 'working') {
       this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: orca ?? 'unknown_state' })
       return fail(
         'forbidden',
-        orca === 'blocked' ? 'the agent asks for a permission: resolve it in Orca' : 'the agent is not waiting for input'
+        orca === 'blocked'
+          ? 'the agent asks for a permission: resolve it in Orca'
+          : 'could not tell what the agent is doing, so nothing was typed'
       )
     }
     try {
       const shown = await this.d.cli.show(job.terminal_id)
       if (shown.agentIdentity?.toLowerCase() !== String(job.agent ?? '').toLowerCase() || !shown.connected || !shown.writable) {
         this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'terminal_not_agent' })
-        return fail('forbidden', 'the terminal is not running the job\'s agent')
+        return fail(
+          'forbidden',
+          orca === 'working'
+            ? "the terminal is not running the job's agent (it may be running another program), so nothing was typed"
+            : "the terminal is not running the job's agent"
+        )
       }
     } catch (error) {
       if (errorCode(error) === 'cli_unavailable') return mapHostError(error)
       return fail('forbidden', 'could not verify the terminal')
+    }
+    if (orca === 'working') {
+      // The state may have changed while the terminal was checked: a permission prompt never takes a message.
+      const again = await this.currentOrcaState(job)
+      if (again === 'blocked') {
+        this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'blocked' })
+        return fail('forbidden', 'the agent asks for a permission: resolve it in Orca')
+      }
+      // A selector on screen takes only an option, never text (the CLI refuses it too; this stops it before typing).
+      if (a.option === undefined) {
+        const options = (await this.readScreen(job))?.options ?? []
+        if (options.length) {
+          this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'selector_on_screen' })
+          return fail('needs_option', 'the agent shows a selector: answer with the number of an option', { options })
+        }
+      }
     }
     if (a.option !== undefined) {
       // A digit typed where no selector shows it would sit in the input box and corrupt the next reply.

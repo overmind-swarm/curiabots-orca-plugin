@@ -29,7 +29,7 @@ test('pairing with an OS key store keeps the token in secrets and connects with 
   assert.equal(hello.plugin_version, '0.1.0')
   assert.equal(hello.orca_version, '1.4.267')
   assert.equal(hello.platform, 'linux')
-  assert.deepEqual(hello.capabilities, ['send.cli'])
+  assert.deepEqual(hello.capabilities, ['send.cli', 'send.working'])
   assert.deepEqual(hello.projects, [])
 
   const id = h.plugin.store.installationId

@@ -282,7 +282,7 @@ test('logs carry identifiers and sizes, never prompts, text or output', async ()
   assert.match(logs, /job\.status/)
 })
 
-test('send only when the agent waits or is done, and the CLI proves the terminal still runs that agent', async () => {
+test('send when the agent waits, is done or works, never on a permission, and the CLI proves the terminal still runs that agent', async () => {
   h = await setup()
   await h.link('link-a', 'tok_' + 'a'.repeat(40))
   await h.allow('link-a')
@@ -291,11 +291,10 @@ test('send only when the agent waits or is done, and the CLI proves the terminal
   const sends = () => h.execCalls.filter((c) => c.args[1] === 'send').length
   const live = (state: string) => (h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_1', state, title: 't', agent: 'claude', stateStartedAt: 1 }] }))
 
-  for (const state of ['blocked', 'working']) {
-    live(state)
-    const r = await send()
-    assert.equal(r.error.code, 'forbidden', state)
-  }
+  live('blocked')
+  const blocked = await send()
+  assert.equal(blocked.error.code, 'forbidden', 'blocked')
+  assert.match(blocked.error.message, /permission/)
   h.host.handlers['agents.list'] = () => ({ agents: [] })
   assert.equal((await send()).error.code, 'forbidden', 'no known state: not proven')
   assert.equal(sends(), 0)
@@ -612,4 +611,56 @@ test('stop whose terminal is already gone is a success without the CLI; with a l
   h.closeFails = 'weird_refusal'
   assert.equal((await h.skill.command('link-a', 'stop', { job_id: JOB2 })).ok, false)
   assert.equal(h.plugin.store.jobsOf('link-a')[JOB2]!.phase, 'running')
+})
+
+test('send while the agent works: typed after the same proofs; never on a permission, a selector or an unproven terminal (dev#2394)', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  await h.skill.command('link-a', 'start_job', start(JOB1))
+  const send = () => h.skill.command('link-a', 'send', { job_id: JOB1, text: 'use branch x', enter: true })
+  const sends = () => h.execCalls.filter((c) => c.args[1] === 'send').length
+  const live = (state: string) => (h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_1', state, title: 't', agent: 'claude', stateStartedAt: 1 }] }))
+  h.showReply = { agentIdentity: 'Claude', connected: true, writable: true }
+
+  // the foreground program cannot be proven to be the agent (a subprocess, a shell): nothing typed
+  live('working')
+  for (const bad of [
+    { agentIdentity: null, connected: true, writable: true },
+    { agentIdentity: 'bash', connected: true, writable: true },
+    { agentIdentity: 'claude', connected: false, writable: true },
+    { agentIdentity: 'claude', connected: true, writable: false }
+  ]) {
+    h.showReply = bad
+    const r = await send()
+    assert.equal(r.error.code, 'forbidden', JSON.stringify(bad))
+    assert.match(r.error.message, /nothing was typed/)
+  }
+  assert.equal(sends(), 0)
+  h.showReply = { agentIdentity: 'Claude', connected: true, writable: true }
+
+  // a permission that appears while the terminal is being checked
+  let calls = 0
+  h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_1', state: ++calls === 1 ? 'working' : 'blocked', title: 't', agent: 'claude', stateStartedAt: 1 }] })
+  assert.equal((await send()).error.code, 'forbidden', 'turned blocked during the send')
+  assert.equal(sends(), 0)
+
+  // a selector on screen takes only an option, never text
+  live('working')
+  h.host.handlers['terminal.read'] = () => ({ lines: F.claudeSelectorSimple, truncated: false })
+  const sel = await send()
+  assert.equal(sel.error.code, 'needs_option')
+  assert.deepEqual(sel.error.details.options.map((o: any) => o.n), [1, 2, 3, 4])
+  assert.equal(sends(), 0)
+  h.host.handlers['terminal.read'] = () => ({ lines: ['building...'], truncated: false })
+
+  // proven: typed, as in any other state
+  assert.deepEqual((await send()).data, { accepted: true })
+  assert.equal(sends(), 1)
+  assert.deepEqual(h.execCalls.at(-1)!.args, ['terminal', 'send', '--terminal', 'term_1', '--text=use branch x', '--enter', '--json'])
+
+  // no known state: not proven
+  h.host.handlers['agents.list'] = () => ({ agents: [] })
+  assert.equal((await send()).error.code, 'forbidden')
+  assert.equal(sends(), 1)
 })

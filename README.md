@@ -79,7 +79,7 @@ Press **Unlink** (twice, to confirm) in the panel. The token is deleted, the ski
 
 - `start_job` creates a worktree in an allowed project (the ticked ones, or any listed project with *Allow all projects*) and starts the agent with the instruction. It is idempotent per job id and never creates a second worktree for the same id.
 - Status changes are reported after they hold for 5 seconds, with the last lines of output (at most 4 KiB). Notices wait in a local outbox, survive restarts and are resent until the service acknowledges them.
-- `send` (answering an agent) is accepted only if the agent is waiting for input or finished its turn (never on a permission prompt: those you resolve in Orca) and the Orca CLI confirms the terminal is still running that agent.
+- `send` (answering an agent) is accepted if the agent is waiting for input, finished its turn, or is working (Claude Code, Codex and the other CLI agents queue what is typed meanwhile and read it when the turn ends), never on a permission prompt (those you resolve in Orca), and only if the Orca CLI confirms the terminal is still running that agent. While it works, a selector on screen takes only an `option`. The plugin announces `send.working` in `hello` so the service never sends in `working` to an older plugin.
 - Limits: 5 active jobs per link and 10 in total, whatever the service asks.
 - Agents you open by hand in Orca are never shown to CuriaBots.
 
@@ -232,7 +232,7 @@ Pulsa **Desvincular** (dos veces, para confirmar) en el panel. Se borra el token
 
 - `start_job` crea un worktree en un proyecto permitido (los marcados, o cualquiera listado con *Permitir todos los proyectos*) y arranca el agente con la instrucción. Es idempotente por id de job y nunca crea un segundo worktree para el mismo id.
 - Los cambios de estado se notifican cuando se mantienen 5 segundos, con las últimas líneas de salida (máx. 4 KiB). Los avisos esperan en una cola local, sobreviven a reinicios y se reenvían hasta que el servicio los confirma.
-- `send` (responder a un agente) solo se acepta si el agente espera una respuesta o terminó su turno (nunca ante un permiso: esos los resuelves en Orca) y la CLI de Orca confirma que la terminal sigue ejecutando ese agente.
+- `send` (responder a un agente) se acepta si el agente espera una respuesta, terminó su turno o está trabajando (Claude Code, Codex y el resto de agentes CLI encolan lo que se escribe mientras tanto y lo leen al acabar el turno), nunca ante un permiso (esos los resuelves en Orca), y solo si la CLI de Orca confirma que la terminal sigue ejecutando ese agente. Mientras trabaja, un selector en pantalla solo admite una `option`. El plugin anuncia `send.working` en `hello` para que el servicio nunca envíe en `working` a un plugin más antiguo.
 - Límites: 5 jobs activos por vinculación y 10 en total, pida lo que pida el servicio.
 - Los agentes que abres a mano en Orca no se muestran nunca a CuriaBots.
 
