@@ -60,6 +60,8 @@ Each link has a switch, **Allow all projects**, **off by default**. Turn it on a
 
 Press **Unlink** (twice, to confirm) in the panel. The token is deleted, the skill is told, and the agents already running in Orca are left alone. Other links are not affected. If you unlink from CuriaBots instead, the link shows as *revoked* and you can remove it.
 
+**Uninstalling the plugin does not unlink it.** Orca has no uninstall event for plugins (the worker's `deactivate` also runs on every restart, disable and update, so it cannot tell them apart), and unlinking there would break updates. After `orca plugin uninstall` the link stays active in CuriaBots and shows as *disconnected*: unlink it from the CuriaBots screen to revoke it. To leave cleanly, press **Unlink** in the panel first, then uninstall. The token is not rotated in place: unlink and link again.
+
 ## Where the token lives
 
 - With an OS key store (`os-keyring`) the token is kept in Orca's encrypted secrets, always.
@@ -212,6 +214,8 @@ Cada vinculación tiene un interruptor, **Permitir todos los proyectos**, **desa
 ### Desvincular
 
 Pulsa **Desvincular** (dos veces, para confirmar) en el panel. Se borra el token, se avisa a la skill y los agentes que ya corren en Orca se quedan como están. Las demás vinculaciones no se tocan. Si desvinculas desde CuriaBots, la vinculación aparece como *revocada* y puedes quitarla.
+
+**Desinstalar el plugin no desvincula.** Orca no emite ningún evento de desinstalación para los plugins (el `deactivate` del worker también corre en cada reinicio, desactivación y actualización, así que no distingue una cosa de otra), y desvincular ahí rompería las actualizaciones. Tras `orca plugin uninstall` la vinculación sigue activa en CuriaBots y aparece como *desconectada*: desvincúlala desde la pantalla de CuriaBots para revocarla. Para irte limpio, pulsa **Desvincular** en el panel y después desinstala. El token no se rota en caliente: desvincula y vuelve a vincular.
 
 ### Dónde se guarda el token
 
