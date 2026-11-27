@@ -290,6 +290,20 @@ export class JobManager {
     }
   }
 
+  /** The state Orca reports now for the job's agent, or null when it cannot be read. */
+  private async liveAgentState(job: JobRecord): Promise<OrcaState | null> {
+    if (!job.workspace_id) return null
+    try {
+      const { agents } = (await this.d.host.call(M.agentsList, { workspaceId: job.workspace_id })) as {
+        agents: { terminalId: string | null; state: string }[]
+      }
+      const mine = agents.find((x) => x.terminalId === job.terminal_id)
+      return mine && ORCA_STATES.has(mine.state) ? (mine.state as OrcaState) : null
+    } catch {
+      return null
+    }
+  }
+
   private async currentOrcaState(job: JobRecord): Promise<OrcaState | null> {
     if (job.phase !== 'running' || !job.workspace_id) return job.orca_state
     try {
@@ -324,11 +338,22 @@ export class JobManager {
     const own = this.own(linkId, jobId)
     if ('error' in own) return own.error
     const job = own.job
-    const orca = await this.currentOrcaState(job)
+    let orca = await this.currentOrcaState(job)
     const closed = job.phase === 'stopped' || job.phase === 'gone' || job.phase === 'failed'
-    const state: JobState =
+    let state: JobState =
       job.phase === 'failed' ? 'failed' : closed ? 'stopped' : orca ? mapState(orca, job.outcome ?? undefined) : 'unknown'
-    const screen = closed ? undefined : await this.readScreen(job)
+    // A stopped job is answered from Orca, not from this record (dev#2399): `stopped` only if its terminal is really
+    // gone. A terminal that lives (closed by someone else's undo, a stop that did not take) reports what the agent does;
+    // one that cannot be checked is `unknown`, which the skill never takes for a confirmed stop.
+    if (job.phase === 'stopped' && job.terminal_id) {
+      const presence = await this.terminalPresence(job)
+      if (presence !== 'absent') {
+        const live = presence === 'present' ? await this.liveAgentState(job) : null
+        state = live ? mapState(live, undefined) : 'unknown'
+        orca = live
+      }
+    }
+    const screen = !closed || (job.phase === 'stopped' && state !== 'stopped') ? await this.readScreen(job) : undefined
     const excerpt = screen?.excerpt ?? ''
     const data: Record<string, unknown> = {
       state,
