@@ -18,6 +18,12 @@ export const LOCAL_MAX_JOBS_PER_LINK = 5
 export const LOCAL_MAX_JOBS_TOTAL = 10
 const EXCERPT_STATES = new Set<JobState>(['waiting_user', 'idle', 'failed', 'stopped'])
 const ORCA_STATES = new Set(['working', 'blocked', 'waiting', 'done'])
+/**
+ * Agents whose turn in progress (`working`) may take a message (contract §1). Only those verified: Claude Code queues
+ * what is typed while it works and runs its commands in their own session, with no controlling terminal, so no
+ * subprocess of the agent can read the job's terminal. Codex steers (sends at once) and the rest are unverified.
+ */
+export const WORKING_SEND_AGENTS = new Set(['claude'])
 
 export interface JobTiming {
   stabilizeMs: number
@@ -370,6 +376,16 @@ export class JobManager {
           ? 'the agent asks for a permission: resolve it in Orca'
           : 'could not tell what the agent is doing, so nothing was typed'
       )
+    }
+    if (a.option !== undefined && orca !== 'waiting') {
+      // A digit answers a question the agent asks. In a turn in progress the only selector likely on screen is a
+      // permission prompt Orca has not reported as blocked yet: a digit there would approve it.
+      this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'option_not_waiting' })
+      return fail('forbidden', 'an option only answers a question the agent is asking; nothing was typed')
+    }
+    if (orca === 'working' && !WORKING_SEND_AGENTS.has(String(job.agent ?? '').toLowerCase())) {
+      this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_agent_unverified' })
+      return fail('forbidden', 'sending while this agent works is not supported; wait until it asks or finishes its turn')
     }
     try {
       const shown = await this.d.cli.show(job.terminal_id)

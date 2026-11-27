@@ -663,4 +663,24 @@ test('send while the agent works: typed after the same proofs; never on a permis
   h.host.handlers['agents.list'] = () => ({ agents: [] })
   assert.equal((await send()).error.code, 'forbidden')
   assert.equal(sends(), 1)
+
+  // an option is never typed mid-turn or after it: the selector there is most likely a permission not reported as blocked yet
+  h.host.handlers['terminal.read'] = () => ({ lines: F.claudeSelectorSimple, truncated: false })
+  for (const state of ['working', 'done']) {
+    live(state)
+    const r = await h.skill.command('link-a', 'send', { job_id: JOB1, option: 1 })
+    assert.equal(r.error.code, 'forbidden', state)
+    assert.match(r.error.message, /nothing was typed/)
+  }
+  assert.equal(sends(), 1)
+  h.host.handlers['terminal.read'] = () => ({ lines: ['building...'], truncated: false })
+
+  // only verified agents take a message mid-turn (contract §1): Codex steers, others are unverified
+  await h.skill.command('link-a', 'start_job', start(JOB2, { agent: 'codex' }))
+  h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_2', state: 'working', title: 't', agent: 'codex', stateStartedAt: 1 }] })
+  h.showReply = { agentIdentity: 'codex', connected: true, writable: true }
+  const codex = await h.skill.command('link-a', 'send', { job_id: JOB2, text: 'use branch x', enter: true })
+  assert.equal(codex.error.code, 'forbidden')
+  assert.match(codex.error.message, /not supported/)
+  assert.equal(sends(), 1)
 })
