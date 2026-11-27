@@ -27,6 +27,14 @@ export interface WorktreeInfo {
   branch: string | null
 }
 
+/** Why one CLI candidate was not usable (logged by the plugin; no paths, no output). */
+export interface ProbeFailure {
+  candidate: 'configured' | 'shim' | 'path'
+  reason: 'not_orca' | 'exec_failed'
+  error_code?: string
+  signal?: string
+}
+
 export interface CliInfo {
   path: string
   orcaVersion: string | null
@@ -92,16 +100,20 @@ export class OrcaCli {
   private now: () => number
   private platform: string
 
+  private onProbeFailed: (info: ProbeFailure) => void
+
   constructor(
     configuredPath: () => Promise<string | undefined>,
     exec: ExecFn = defaultExec,
     now: () => number = Date.now,
-    platform: string = process.platform
+    platform: string = process.platform,
+    onProbeFailed: (info: ProbeFailure) => void = () => {}
   ) {
     this.configuredPath = configuredPath
     this.exec = exec
     this.now = now
     this.platform = platform
+    this.onProbeFailed = onProbeFailed
   }
 
   /** The first candidate that passes the status probe; cached for a minute. */
@@ -109,7 +121,9 @@ export class OrcaCli {
     if (!force && this.now() - this.checkedAt < 60_000) return this.cached
     this.checkedAt = this.now()
     this.cached = null
-    for (const path of candidatePaths(await this.configuredPath(), this.platform as NodeJS.Platform)) {
+    const paths = candidatePaths(await this.configuredPath(), this.platform as NodeJS.Platform)
+    for (const [i, path] of paths.entries()) {
+      const candidate = path === 'orca' ? 'path' : i === 0 && paths.length === 3 ? 'configured' : 'shim'
       try {
         const { stdout } = await this.exec(path, ['status', '--json'], CLI_TIMEOUT_MS)
         const status = parseStatus(stdout)
@@ -117,8 +131,16 @@ export class OrcaCli {
           this.cached = { path, orcaVersion: status.orcaVersion }
           break
         }
-      } catch {
-        /* try the next one */
+        this.onProbeFailed({ candidate, reason: 'not_orca' })
+      } catch (error) {
+        // Why a candidate failed, for the plugin log only: an error code, an exit code or a signal, never output.
+        const e = error as { code?: unknown; signal?: unknown }
+        this.onProbeFailed({
+          candidate,
+          reason: 'exec_failed',
+          error_code: typeof e?.code === 'string' || typeof e?.code === 'number' ? String(e.code).slice(0, 40) : undefined,
+          signal: typeof e?.signal === 'string' ? e.signal.slice(0, 20) : undefined
+        })
       }
     }
     return this.cached

@@ -103,7 +103,9 @@ export class Plugin {
         return typeof p === 'string' && p.trim() ? p.trim() : undefined
       },
       d.exec,
-      d.now
+      d.now,
+      undefined,
+      (info) => logLine(d.host, 'cli.probe_failed', { ...info })
     )
     this.jobs = new JobManager({
       host: d.host,
