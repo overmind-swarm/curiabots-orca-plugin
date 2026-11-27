@@ -484,6 +484,15 @@ export class JobManager {
     const own = this.own(linkId, jobId)
     if ('error' in own) return own.error
     const job = own.job
+    if (job.phase === 'stopped' && job.terminal_id) {
+      // Recorded as stopped, but get_job asks Orca (dev#2399): if the terminal still lives, stop closes it again.
+      // Only a terminal Orca says is gone makes this the idempotent no-op.
+      if ((await this.terminalPresence(job)) === 'absent') return { ok: true, data: { stopped: true } }
+      const refused = await this.closeTerminal(linkId, job)
+      if (refused) return refused
+      this.log('stop.retried', { link_id: linkId, job_id: job.job_id })
+      return { ok: true, data: { stopped: true } }
+    }
     if (job.phase !== 'running' || !job.terminal_id) return { ok: true, data: { stopped: true } }
     const excerpt = await this.readExcerpt(job)
     const refused = await this.closeTerminal(linkId, job)

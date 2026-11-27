@@ -215,13 +215,14 @@ test('get_job, read_output, send (via the CLI) and stop', async () => {
   assert.deepEqual(stopped.data, { stopped: true })
   assert.deepEqual(h.host.callsOf('terminal.close')[0]!.params, { terminalId: 'term_1' })
   await until(() => h.skill.events('link-a').some((e) => e.event.state === 'stopped'))
+  // The fake Orca still lists the agent: get_job asks Orca and does not take the record's word for it (dev#2399).
+  assert.equal((await h.skill.command('link-a', 'get_job', { job_id: JOB1 })).data.state, 'waiting_user')
+  // Orca no longer has the terminal: a second stop is an idempotent no-op.
+  h.host.handlers['agents.list'] = () => ({ agents: [] })
+  h.host.handlers['terminal.list'] = () => ({ terminals: [], truncated: false })
   assert.deepEqual((await h.skill.command('link-a', 'stop', { job_id: JOB1 })).data, { stopped: true }, 'idempotent')
   assert.equal(h.host.callsOf('terminal.close').length, 1)
   assert.equal((await h.skill.command('link-a', 'read_output', { job_id: JOB1, tail_lines: 5 })).error.code, 'not_found')
-  // The fake Orca still lists the agent: get_job asks Orca and does not take the record's word for it (dev#2399).
-  assert.equal((await h.skill.command('link-a', 'get_job', { job_id: JOB1 })).data.state, 'waiting_user')
-  h.host.handlers['agents.list'] = () => ({ agents: [] })
-  h.host.handlers['terminal.list'] = () => ({ terminals: [], truncated: false })
   assert.equal((await h.skill.command('link-a', 'get_job', { job_id: JOB1 })).data.state, 'stopped')
 })
 
@@ -255,6 +256,35 @@ test('get_job of a stopped job asks Orca: stopped only when the terminal is gone
   // A truncated list that does not name the terminal proves nothing either.
   h.host.handlers['terminal.list'] = () => ({ terminals: [], truncated: true })
   assert.equal((await h.skill.command('link-a', 'get_job', { job_id: JOB1 })).data.state, 'unknown')
+})
+
+test('a stopped job whose terminal is still alive is stopped again; once Orca says it is gone, stop is a no-op (dev#2399)', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a')
+  await h.skill.command('link-a', 'start_job', start(JOB1))
+  await h.skill.command('link-a', 'stop', { job_id: JOB1 })
+  assert.equal(h.host.callsOf('terminal.close').length, 1)
+  // The fake Orca still lists the terminal: the first stop did not take.
+  h.host.handlers['terminal.list'] = () => ({ terminals: [{ id: 'term_1' }], truncated: false })
+  assert.equal((await h.skill.command('link-a', 'get_job', { job_id: JOB1 })).data.state === 'stopped', false)
+  assert.deepEqual((await h.skill.command('link-a', 'stop', { job_id: JOB1 })).data, { stopped: true })
+  assert.equal(h.host.callsOf('terminal.close').length, 2, 'closed again')
+
+  // The terminal lives and Orca refuses the close (CLI fallback also fails): an error, never a silent success.
+  h.host.handlers['terminal.close'] = () => {
+    throw Object.assign(new Error('not owned'), { code: 'action_failed' })
+  }
+  h.closeFails = 'runtime_unavailable'
+  const failed = await h.skill.command('link-a', 'stop', { job_id: JOB1 })
+  assert.equal(failed.ok, false)
+
+  // Gone: no more close attempts.
+  h.host.handlers['terminal.list'] = () => ({ terminals: [], truncated: false })
+  h.host.handlers['agents.list'] = () => ({ agents: [] })
+  const before = h.host.callsOf('terminal.close').length
+  assert.deepEqual((await h.skill.command('link-a', 'stop', { job_id: JOB1 })).data, { stopped: true })
+  assert.equal(h.host.callsOf('terminal.close').length, before)
 })
 
 test('after a reply the next stable state is reported even if it equals the last one', async () => {
