@@ -116,9 +116,23 @@ export class OrcaCli {
     this.onProbeFailed = onProbeFailed
   }
 
-  /** The first candidate that passes the status probe; cached for a minute. */
+  private inflight: Promise<CliInfo | null> | null = null
+
+  /**
+   * The first candidate that passes the status probe; cached for a minute. Concurrent callers share the probe in
+   * progress: before, a second caller during the first probe (the `hello` at start-up, racing the job reconcile) got
+   * the empty cache at once and the link announced no `send.cli`/`send.working` until the next reconnect.
+   */
   async resolve(force = false): Promise<CliInfo | null> {
+    if (this.inflight) return this.inflight
     if (!force && this.now() - this.checkedAt < 60_000) return this.cached
+    this.inflight = this.probe().finally(() => {
+      this.inflight = null
+    })
+    return this.inflight
+  }
+
+  private async probe(): Promise<CliInfo | null> {
     this.checkedAt = this.now()
     this.cached = null
     const paths = candidatePaths(await this.configuredPath(), this.platform as NodeJS.Platform)

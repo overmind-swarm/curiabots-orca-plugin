@@ -208,3 +208,46 @@ test('the Orca CLI never inherits the plugin host IPC channel (it aborts with NO
   assert.deepEqual(cliEnv(host), { HOME: '/home/u', PATH: '/bin' })
   assert.equal(host.NODE_CHANNEL_FD, '3', 'the host environment is not modified')
 })
+
+test('concurrent resolve() calls share the probe in progress: the hello at start-up never gets an empty answer', async () => {
+  let probes = 0
+  let release!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  const cli = new OrcaCli(
+    async () => undefined,
+    async (file) => {
+      probes++
+      await gate
+      if (file.endsWith('linux-orca-cli-shim/orca')) return { stdout: '{"ok":true,"result":{"runtime":{"appVersion":"1.4.277"}}}', stderr: '' }
+      throw new Error('missing')
+    },
+    Date.now,
+    'linux'
+  )
+  const first = cli.resolve() // e.g. the job reconcile
+  const second = cli.resolve() // e.g. the hello, while the first probe runs
+  release()
+  const [a, b] = await Promise.all([first, second])
+  assert.equal(a?.orcaVersion, '1.4.277')
+  assert.equal(b?.orcaVersion, '1.4.277')
+  assert.equal(probes, 1, 'one probe for both callers')
+})
+
+test('a failed CLI candidate is reported with its error code or signal, never its output', async () => {
+  const seen: unknown[] = []
+  const cli = new OrcaCli(
+    async () => undefined,
+    async (file) => {
+      if (file === 'orca') return { stdout: 'screen reader', stderr: '' }
+      throw Object.assign(new Error('boom'), { code: null, signal: 'SIGABRT' })
+    },
+    Date.now,
+    'linux',
+    (info) => seen.push(info)
+  )
+  assert.equal(await cli.resolve(), null)
+  assert.deepEqual(seen, [
+    { candidate: 'shim', reason: 'exec_failed', error_code: undefined, signal: 'SIGABRT' },
+    { candidate: 'path', reason: 'not_orca' }
+  ])
+})
