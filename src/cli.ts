@@ -32,10 +32,23 @@ export interface CliInfo {
   orcaVersion: string | null
 }
 
+/**
+ * Variables of the plugin host that must not reach the Orca CLI. The host is a Node child process with an IPC
+ * channel: `NODE_CHANNEL_FD` makes the CLI (Electron/Node) try to open that channel and abort (SIGABRT), so the CLI
+ * looks missing and `hello` announces no `send.cli`/`send.working`. `ELECTRON_RUN_AS_NODE` would run it as plain Node.
+ */
+const HOST_ONLY_ENV = ['ELECTRON_RUN_AS_NODE', 'NODE_CHANNEL_FD', 'NODE_CHANNEL_SERIALIZATION_MODE', 'CRASHDUMP_SIGNAL_FD', 'CRASHPAD_HANDLER_PID']
+
+/** The environment the Orca CLI runs with: the plugin host's, without what belongs to the host process. */
+export function cliEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env }
+  for (const key of HOST_ONLY_ENV) delete out[key]
+  return out
+}
+
 export const defaultExec: ExecFn = (file, args, timeoutMs) =>
   new Promise((resolve, reject) => {
-    const env: NodeJS.ProcessEnv = { ...process.env }
-    delete env.ELECTRON_RUN_AS_NODE
+    const env = cliEnv()
     execFile(
       file,
       args,

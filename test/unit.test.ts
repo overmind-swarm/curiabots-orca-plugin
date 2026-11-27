@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { OrcaCli, candidatePaths, defaultExec, parseStatus } from '../src/cli.ts'
+import { OrcaCli, candidatePaths, cliEnv, defaultExec, parseStatus } from '../src/cli.ts'
 import { resolveEndpoints } from '../src/endpoints.ts'
 import { PLUGIN_VERSION } from '../src/version.ts'
 import { backoffDelay, boundLines, truncateTailBytes } from '../src/util.ts'
@@ -201,4 +201,10 @@ test('archived keeps only well-formed job ids, at most 500', () => {
   assert.equal(parseServerMessage(JSON.stringify({ v: 1, type: 'archived', job_ids: 'x' })), null)
   const many = Array.from({ length: 800 }, (_, i) => `${String(i).padStart(8, '0')}-1111-4111-8111-111111111111`)
   assert.equal((parseServerMessage(JSON.stringify({ v: 1, type: 'archived', job_ids: many })) as any).job_ids.length, 500)
+})
+
+test('the Orca CLI never inherits the plugin host IPC channel (it aborts with NODE_CHANNEL_FD) nor ELECTRON_RUN_AS_NODE', () => {
+  const host = { HOME: '/home/u', PATH: '/bin', ELECTRON_RUN_AS_NODE: '1', NODE_CHANNEL_FD: '3', NODE_CHANNEL_SERIALIZATION_MODE: 'json', CRASHDUMP_SIGNAL_FD: '4', CRASHPAD_HANDLER_PID: '9' }
+  assert.deepEqual(cliEnv(host), { HOME: '/home/u', PATH: '/bin' })
+  assert.equal(host.NODE_CHANNEL_FD, '3', 'the host environment is not modified')
 })
