@@ -170,6 +170,9 @@ export class LinkConnection {
         orca_version: info.orca_version,
         platform: this.o.platform,
         capabilities: info.capabilities,
+        // The last event seq this plugin issued (0: none yet). The skill drops a repeated (link, seq), so it needs this to
+        // notice a wiped store whose counter restarted at 1 (dev#2401). Older skills ignore the field.
+        last_seq: this.o.store.outbox(this.o.linkId).next_seq - 1,
         projects
       })
       this.helloTimer = setTimeout(() => {

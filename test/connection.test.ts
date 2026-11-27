@@ -42,6 +42,19 @@ test('reconnects with backoff after the server drops it and keeps the same insta
   assert.equal(h.skill.conns.at(-1)!.hello.installation_id, first.hello.installation_id)
 })
 
+test('hello carries the last issued event seq: 0 when none, and it survives a restart (dev#2401)', async () => {
+  h = await setup()
+  await h.link('link-a', TOKEN)
+  assert.equal(h.skill.connOf('link-a')!.hello.last_seq, 0)
+  h.plugin.store.enqueue('link-a', { kind: 'job.status', job_id: JOB1, state: 'working' } as any)
+  h.plugin.store.enqueue('link-a', { kind: 'job.status', job_id: JOB1, state: 'idle' } as any)
+  await until(() => ((h.host.store.get('outbox:link-a') as any)?.next_seq ?? 0) === 3)
+  const before = h.skill.conns.length
+  await h.restart()
+  await until(() => h.skill.conns.length > before && !!h.skill.conns.at(-1)!.hello)
+  assert.equal(h.skill.conns.at(-1)!.hello.last_seq, 2)
+})
+
 test('close code 4401 stops reconnecting and says so; the other link is unaffected', async () => {
   h = await setup()
   await h.link('link-a', TOKEN)
