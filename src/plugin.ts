@@ -65,6 +65,8 @@ export interface PanelState {
   cli: { available: boolean; path: string | null }
   /** The clone folder of the settings: set at all, and usable (an absolute path to an existing folder). Never the path. */
   clone_root: { configured: boolean; valid: boolean }
+  /** Projects `add_project` added that wait for the user's approval before "allow all projects" includes them. */
+  added_projects: { id: string; name: string; host_id: string }[]
   service_url: string
   service_url_valid: boolean
   installation: string
@@ -105,6 +107,12 @@ export class Plugin {
   private disposed = false
   /** One `add_project` at a time on this Orca: two clones into the same folder must not race. */
   private adding = false
+  /**
+   * Projects `add_project` registered that the user has not approved yet: "allow all projects" leaves them out, so a
+   * repository the bot asked for never becomes runnable without a decision of the user in the panel (or a tick in a
+   * link's explicit list). Persisted in `storage` as `added_projects`.
+   */
+  private quarantine: { id: string; host_id: string }[] = []
 
   private d: PluginDeps
 
@@ -152,6 +160,10 @@ export class Plugin {
 
   async start(): Promise<void> {
     await this.store.load(this.d.newId)
+    const q = await this.d.host.storage.get('added_projects')
+    this.quarantine = Array.isArray(q)
+      ? (q as unknown[]).filter((p): p is { id: string; host_id: string } => typeof (p as any)?.id === 'string' && typeof (p as any)?.host_id === 'string').slice(0, 500)
+      : []
     this.jobs.init()
     for (const link of this.store.links) if (!link.revoked) await this.connect(link)
     this.changed()
@@ -250,6 +262,7 @@ export class Plugin {
       token_without_keyring: this.store.links.some((l) => l.token_in_storage && !l.revoked),
       cli: { available: Boolean(cli), path: cli?.path ?? null },
       clone_root: { configured: root !== '', valid: root !== '' && (await resolveRoot(root)).ok },
+      added_projects: await this.pendingAdded(),
       service_url: endpoints?.base ?? '',
       service_url_valid: Boolean(endpoints),
       installation: this.store.installationId.slice(0, 8),
@@ -432,9 +445,43 @@ export class Plugin {
    */
   async eligibleProjects(): Promise<{ id: string; name: string; host_id: string }[]> {
     return (await this.listProjects())
-      .filter((p) => !p.hidden)
+      .filter((p) => !p.hidden && !this.isQuarantined(p))
       .slice(0, MAX_ANNOUNCED_PROJECTS)
       .map((p) => ({ id: p.id, name: p.name, host_id: p.host_id }))
+  }
+
+  private isQuarantined(p: { id: string; host_id: string }): boolean {
+    return this.quarantine.some((q) => q.id === p.id && q.host_id === p.host_id)
+  }
+
+  private async saveQuarantine(): Promise<void> {
+    try {
+      await this.d.host.storage.set('added_projects', this.quarantine)
+    } catch (error) {
+      this.log('storage.write_failed', { key: 'added_projects', error: errorMessage(error) })
+    }
+  }
+
+  /** The quarantined projects Orca still lists, with their names, for the panel. */
+  private async pendingAdded(): Promise<{ id: string; name: string; host_id: string }[]> {
+    if (this.quarantine.length === 0) return []
+    try {
+      return (await this.listProjects()).filter((p) => this.isQuarantined(p)).map((p) => ({ id: p.id, name: p.name, host_id: p.host_id }))
+    } catch {
+      return []
+    }
+  }
+
+  /** The user approves a project `add_project` added: "allow all projects" may include it from now on. */
+  async trustProject(id: string, hostId: string): Promise<boolean> {
+    const before = this.quarantine.length
+    this.quarantine = this.quarantine.filter((q) => !(q.id === id && q.host_id === hostId))
+    if (this.quarantine.length === before) return false
+    await this.saveQuarantine()
+    this.log('projects.trusted', {})
+    void this.refreshAllProjects()
+    this.changed()
+    return true
   }
 
   /** What to tell the service for a link: the explicit list, or Orca's whole list in "allow all" mode. */
@@ -608,8 +655,14 @@ export class Plugin {
       const project = listed
         ? { id: listed.id, name: listed.name, host_id: listed.host_id }
         : { id: repo.id, name: repo.name || directory, host_id: 'local' }
+      // A project Orca did not have before waits for the user's approval, even with "allow all projects".
+      if (!alreadyRegistered && !this.isQuarantined(project)) {
+        this.quarantine.push({ id: project.id, host_id: project.host_id })
+        if (this.quarantine.length > 500) this.quarantine.splice(0, this.quarantine.length - 500)
+        await this.saveQuarantine()
+      }
       const allowed =
-        (link.allow_all_projects === true && listed !== undefined && !listed.hidden) ||
+        (link.allow_all_projects === true && listed !== undefined && !listed.hidden && !this.isQuarantined(project)) ||
         link.allowed_projects.some((p) => p.id === project.id && p.host_id === project.host_id)
       this.log('add_project.done', { link_id: linkId, cloned, already_registered: alreadyRegistered, listed: Boolean(listed), allowed })
       void this.refreshAllProjects()
@@ -637,6 +690,12 @@ export class Plugin {
     }
     link.allowed_projects = allowed
     await this.store.saveLinks()
+    // Ticking a project the bot added is the user's approval of it.
+    if (allowed.some((a) => this.isQuarantined(a))) {
+      this.quarantine = this.quarantine.filter((q) => !allowed.some((a) => a.id === q.id && a.host_id === q.host_id))
+      await this.saveQuarantine()
+      void this.refreshAllProjects()
+    }
     this.announced.delete(linkId)
     void this.conns.get(linkId)?.sendProjects()
     this.log('projects.set', { link_id: linkId, count: allowed.length })

@@ -102,6 +102,11 @@ async function setAllowAll(link: LinkView, on: boolean): Promise<void> {
   await refresh()
 }
 
+async function trust(p: { id: string; host_id: string }): Promise<void> {
+  await plugin.request('projects.trust', { id: p.id, host_id: p.host_id })
+  await refresh()
+}
+
 async function setAllowAdd(link: LinkView, on: boolean): Promise<void> {
   await plugin.request('link.addProjects.allow', { link_id: link.link_id, on })
   await refresh()
@@ -262,6 +267,22 @@ export default function Panel() {
       {s !== null && !s.cli.available ? (
         <Callout tone="neutral" title={t.noCliTitle}>
           <Text size="xs">{t.noCliBody}</Text>
+        </Callout>
+      ) : null}
+
+      {s !== null && s.added_projects.length > 0 ? (
+        <Callout tone="warning" title={t.addedTitle}>
+          <Stack gap="xs">
+            <Text size="xs">{t.addedBody}</Text>
+            {s.added_projects.map((p) => (
+              <Row key={`${p.host_id}:${p.id}`} gap="xs">
+                <Text size="xs">{p.name}</Text>
+                <Button size="sm" variant="outline" onPress={() => void trust(p)}>
+                  {t.addedTrust}
+                </Button>
+              </Row>
+            ))}
+          </Stack>
         </Callout>
       ) : null}
 

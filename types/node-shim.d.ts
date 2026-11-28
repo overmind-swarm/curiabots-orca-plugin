@@ -4,12 +4,24 @@ declare namespace NodeJS {
   type Platform = 'aix' | 'darwin' | 'freebsd' | 'linux' | 'openbsd' | 'sunos' | 'win32' | (string & {})
   type ProcessEnv = Record<string, string | undefined>
 }
-declare const process: { platform: NodeJS.Platform; env: NodeJS.ProcessEnv }
+declare const process: { platform: NodeJS.Platform; env: NodeJS.ProcessEnv; kill(pid: number, signal?: string): void }
 declare const Buffer: {
   byteLength(text: string, encoding?: string): number
   from(text: string, encoding?: string): { subarray(start: number): { toString(encoding?: string): string } }
 }
 declare module 'node:child_process' {
+  export function spawn(
+    file: string,
+    args: string[],
+    options: { env?: NodeJS.ProcessEnv; windowsHide?: boolean; shell?: boolean; detached?: boolean; stdio?: string[] }
+  ): {
+    pid?: number
+    stdout: { on(event: 'data', cb: (chunk: unknown) => void): void } | null
+    stderr: { on(event: 'data', cb: (chunk: unknown) => void): void } | null
+    kill(signal?: string): boolean
+    on(event: 'error', cb: (error: Error & { code?: unknown }) => void): void
+    on(event: 'close', cb: (code: number | null, signal: string | null) => void): void
+  }
   export function execFile(
     file: string,
     args: string[],
@@ -20,9 +32,10 @@ declare module 'node:child_process' {
       maxBuffer?: number
       windowsHide?: boolean
       shell?: boolean
+      detached?: boolean
     },
     callback: (error: (Error & { code?: unknown; killed?: boolean; signal?: string }) | null, stdout: string, stderr: string) => void
-  ): unknown
+  ): { pid?: number; kill(signal?: string): boolean }
 }
 declare module 'node:os' {
   export function homedir(): string

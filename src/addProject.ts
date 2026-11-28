@@ -1,7 +1,7 @@
 // `add_project` (dev#2424): clone a Git repository into the clone folder the user chose on this computer and register
 // it in Orca with `orca repo add`. Everything that decides where something is written lives here, on this computer:
 // the service only sends a URL and, optionally, the name of one folder inside that root.
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { lstat, readFile, realpath, rename, rm, stat } from 'node:fs/promises'
 import { isAbsolute, join, sep } from 'node:path'
@@ -24,6 +24,29 @@ const PATH_CHARS = /^[A-Za-z0-9._~/%-]+$/
 
 export type GitUrl = { kind: 'https' | 'ssh'; url: string; repoName: string }
 
+/**
+ * Hosts a clone must never reach: this computer, its private network and link-local addresses (a cloud metadata
+ * service), named or as literals, plus names that only mean something on a local network. Without this, a confirmed
+ * request could make the user's computer probe its own LAN. Names are not resolved: a public name that points to a
+ * private address is not caught here.
+ */
+export function isLocalHost(rawHost: string): boolean {
+  const host = rawHost.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
+  if (host.includes(':')) {
+    // IPv6: loopback, unspecified, unique local (fc00::/7), link-local (fe80::/10) and IPv4-mapped.
+    return host === '::1' || host === '::' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith('::ffff:')
+  }
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])]
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224
+  }
+  // Numbers that are not a dotted quad (decimal, hex, short forms) can still mean an address: refused.
+  if (/^[0-9.x]+$/.test(host)) return true
+  if (!host.includes('.')) return true // single-label names: intranet, localhost
+  return /(^|\.)(localhost|local|internal|lan|home\.arpa|intranet|corp)$/.test(host)
+}
+
 /** The last path segment without `.git`, or '' when it is not usable as a folder name. */
 function repoNameOf(path: string): string {
   const last = path.replace(/\/+$/, '').split('/').pop() ?? ''
@@ -43,7 +66,7 @@ export function parseGitUrl(raw: unknown): GitUrl | null {
   const scp = SCP_LIKE.exec(raw)
   if (scp) {
     const [, , host, path] = scp
-    if (!HOST.test(host!) || path!.startsWith('-') || path!.includes('..')) return null
+    if (!HOST.test(host!) || isLocalHost(host!) || path!.startsWith('-') || path!.includes('..')) return null
     const name = repoNameOf(path!)
     return name ? { kind: 'ssh', url: raw, repoName: name } : null
   }
@@ -57,7 +80,7 @@ export function parseGitUrl(raw: unknown): GitUrl | null {
   if (u.password || (u.protocol === 'https:' && u.username)) return null
   if (u.search || u.hash || raw.includes('?') || raw.includes('#')) return null
   const host = u.hostname
-  if (!host || host.startsWith('-') || !(HOST.test(host) || /^\[[0-9a-f:.]+\]$/i.test(host))) return null
+  if (!host || host.startsWith('-') || !(HOST.test(host) || /^\[[0-9a-f:.]+\]$/i.test(host)) || isLocalHost(host)) return null
   // A user that starts with `-` would reach ssh as an option.
   if (u.username && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(u.username)) return null
   const path = u.pathname
@@ -114,17 +137,44 @@ export function gitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv 
 
 export type GitFn = (args: string[], timeoutMs: number) => Promise<ExecResult>
 
+/**
+ * Runs git in its own process group and, past the time limit, kills the whole group: `git clone` leaves the transfer
+ * to children (`git-remote-https`, `ssh`, `index-pack`) that would otherwise keep writing after git itself is killed.
+ */
 export const defaultGit: GitFn = (args, timeoutMs) =>
   new Promise((resolve, reject) => {
-    execFile(
-      'git',
-      args,
-      { timeout: timeoutMs, killSignal: 'SIGKILL', env: gitEnv(), maxBuffer: 256 * 1024, windowsHide: true, shell: false },
-      (error, stdout, stderr) => {
-        if (error) reject(Object.assign(error, { stdout, stderr }))
-        else resolve({ stdout, stderr })
+    // `spawn`, not `execFile`: execFile drops `detached`, and the group is what lets the whole tree be killed.
+    const group = process.platform !== 'win32'
+    const child = spawn('git', args, { env: gitEnv(), windowsHide: true, shell: false, detached: group, stdio: ['ignore', 'pipe', 'pipe'] })
+    const MAX = 256 * 1024
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    child.stdout?.on('data', (d: unknown) => (stdout = (stdout + String(d)).slice(-MAX)))
+    child.stderr?.on('data', (d: unknown) => (stderr = (stderr + String(d)).slice(-MAX)))
+    const timer = setTimeout(() => {
+      timedOut = true
+      try {
+        if (group && child.pid) process.kill(-child.pid, 'SIGKILL')
+        else child.kill('SIGKILL')
+      } catch {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          /* already gone */
+        }
       }
-    )
+    }, timeoutMs)
+    child.on('error', (error: Error & { code?: unknown }) => {
+      clearTimeout(timer)
+      reject(Object.assign(error, { stdout, stderr }))
+    })
+    child.on('close', (code: number | null, signal: string | null) => {
+      clearTimeout(timer)
+      if (timedOut) reject(Object.assign(new Error('git timed out'), { stdout, stderr, killed: true, signal: 'SIGKILL' }))
+      else if (code === 0) resolve({ stdout, stderr })
+      else reject(Object.assign(new Error(`git exited with ${code ?? signal}`), { stdout, stderr, code, signal: signal ?? undefined }))
+    })
   })
 
 /**

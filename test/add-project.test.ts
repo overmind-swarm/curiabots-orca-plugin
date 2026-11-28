@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { cloneArgs, gitEnv, originUrlOf, parseGitUrl, sameRemote } from '../src/addProject.ts'
+import { cloneArgs, defaultGit, gitEnv, isLocalHost, originUrlOf, parseGitUrl, sameRemote } from '../src/addProject.ts'
 import { repoFailure } from '../src/cli.ts'
 import { validateArgs } from '../src/wire.ts'
 import { until } from './fake-skill.ts'
@@ -89,12 +89,29 @@ test('URLs: only https and ssh, never credentials, local paths, file://, ext:: o
     'https://github.com/acme/wid get',
     'https://github.com/acme/widget\n',
     'c:\\\\repos\\\\widget',
+    'https://127.0.0.1/acme/widget.git',
+    'https://localhost/acme/widget.git',
+    'https://169.254.169.254/latest/x.git',
+    'https://10.0.0.5/acme/widget.git',
+    'https://192.168.1.10:8443/acme/widget.git',
+    'https://172.20.0.1/acme/widget.git',
+    'https://[::1]/acme/widget.git',
+    'https://[fd00::1]/acme/widget.git',
+    'https://2130706433/acme/widget.git',
+    'https://0x7f000001/acme/widget.git',
+    'https://gitlab.local/acme/widget.git',
+    'https://intranet/acme/widget.git',
+    'git@10.1.2.3:acme/widget.git',
+    'git@gitlab.internal:acme/widget.git',
+    'ssh://git@127.0.0.1/acme/widget',
     '',
     'x'.repeat(600)
   ]) {
     assert.equal(parseGitUrl(bad), null, bad)
   }
   assert.equal(parseGitUrl('https://github.com/acme/widget.git')!.repoName, 'widget')
+  assert.equal(isLocalHost('gitlab.example.com'), false)
+  assert.equal(isLocalHost('8.8.8.8'), false)
 })
 
 test('arguments: a directory is one folder name, never a path; anything else is invalid_args', () => {
@@ -179,13 +196,61 @@ test('clones into the clone folder, registers it with the CLI and returns the pr
   assert.equal(start.error.code, 'forbidden')
 })
 
-test('with allow all projects the new project is allowed and announced', async () => {
+test('with allow all projects the new project still waits for the user: not allowed, not announced, start_job refused', async () => {
   await ready()
   await h!.plugin.setAllowAll('link-a', true)
   const r = await h!.skill.command('link-a', 'add_project', { url: 'git@github.com:acme/gadget.git', directory: 'gadget-2' }, 5000)
-  assert.equal(r.data.allowed, true)
+  assert.equal(r.data.allowed, false)
   assert.equal(r.data.directory, 'gadget-2')
+  assert.ok(!(await h!.plugin.eligibleProjects()).some((p) => p.id === 'proj-1'))
+  const job = { job_id: '11111111-1111-4111-8111-111111111111', project_id: 'proj-1', workspace_name: 'x', agent: 'claude', prompt: 'hi' }
+  assert.equal((await h!.skill.command('link-a', 'start_job', job)).error.code, 'forbidden')
+  const state = await h!.plugin.getState()
+  assert.deepEqual(state.added_projects, [{ id: 'proj-1', name: 'gadget-2', host_id: 'local' }])
+  // The quarantine survives a restart.
+  await h!.restart()
+  await until(() => (h as any).statusOf('link-a') === 'online', 3000)
+  assert.deepEqual((await h!.plugin.getState()).added_projects.map((p) => p.id), ['proj-1'])
+  // The user approves it in the panel: from then on "allow all" includes and announces it.
+  assert.equal(await h!.plugin.trustProject('proj-1', 'local'), true)
+  assert.deepEqual((await h!.plugin.getState()).added_projects, [])
   await until(() => h!.skill.connOf('link-a')!.received.some((m: any) => m.type === 'projects' && m.projects.some((p: any) => p.id === 'proj-1')), 3000, 'projects announced')
+})
+
+test('ticking a project the agent added in a link\'s explicit list approves it', async () => {
+  await ready()
+  await h!.skill.command('link-a', 'add_project', { url: URL }, 5000)
+  assert.equal((await h!.plugin.getState()).added_projects.length, 1)
+  await h!.plugin.setProjects('link-a', [{ id: 'proj-1', host_id: 'local' }])
+  assert.deepEqual((await h!.plugin.getState()).added_projects, [])
+})
+
+test('a project Orca already had is not put in quarantine', async () => {
+  await ready()
+  await mkdir(join(root, 'widget', '.git'), { recursive: true })
+  await writeFile(join(root, 'widget', '.git', 'config'), `[remote "origin"]\n\turl = ${URL}\n`)
+  h!.repoAddReply(join(root, 'widget')) // the user had added it to Orca by hand
+  const r = await h!.skill.command('link-a', 'add_project', { url: URL }, 5000)
+  assert.equal(r.data.already_registered, true)
+  assert.deepEqual((await h!.plugin.getState()).added_projects, [])
+})
+
+test('the real git runner kills the whole process group at the time limit', { skip: process.platform === 'win32' }, async () => {
+  // A stand-in for git on PATH that leaves a grandchild behind, as git-remote-https would.
+  const bin = await mkdtemp(join(tmpdir(), 'curiabots-fakegit-'))
+  const marker = join(root, 'alive')
+  await writeFile(join(bin, 'git'), `#!/bin/sh\n(sleep 2; touch ${marker}) &\nsleep 30\n`, { mode: 0o755 })
+  const savedPath = process.env.PATH
+  process.env.PATH = `${bin}:${savedPath}`
+  try {
+    const error = await defaultGit(['clone'], 300).then(() => null, (e) => e)
+    assert.ok(error && error.killed, 'reported as killed by the time limit')
+    await new Promise((r) => setTimeout(r, 2500))
+    assert.deepEqual(await readdir(root), [], 'the grandchild died with the group')
+  } finally {
+    process.env.PATH = savedPath
+    await rm(bin, { recursive: true, force: true })
+  }
 })
 
 test('repeating it is idempotent: the same repository already there is only registered again', async () => {
