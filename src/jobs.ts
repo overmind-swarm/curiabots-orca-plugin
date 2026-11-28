@@ -187,6 +187,9 @@ export class JobManager {
         return this.stop(linkId, (checked.value as any).job_id)
       case 'remove_workspace':
         return this.removeWorkspace(linkId, checked.value as { job_id: string; force: boolean })
+      case 'add_project':
+        // Not a job command: the plugin routes it before it gets here (Plugin.addProject).
+        return fail('internal', 'add_project is not a job command')
     }
   }
 

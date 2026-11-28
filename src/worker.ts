@@ -95,6 +95,10 @@ export default function activate(orca: OrcaWorkerApi): void {
     await ready
     return { ok: await plugin.setAllowAll(String(input?.link_id ?? ''), input?.on === true) }
   })
+  orca.panels.handle('link.addProjects.allow', async (input) => {
+    await ready
+    return { ok: await plugin.setAllowAddProjects(String(input?.link_id ?? ''), input?.on === true) }
+  })
   orca.panels.handle('projects.list', async () => {
     await ready
     try {

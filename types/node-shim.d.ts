@@ -15,6 +15,7 @@ declare module 'node:child_process' {
     args: string[],
     options: {
       timeout?: number
+      killSignal?: string
       env?: NodeJS.ProcessEnv
       maxBuffer?: number
       windowsHide?: boolean
@@ -30,8 +31,22 @@ declare module 'node:os' {
 declare module 'node:path' {
   export function isAbsolute(path: string): boolean
   export function join(...parts: string[]): string
+  export const sep: string
 }
 declare module 'node:crypto' {
   export function createHash(algorithm: string): { update(data: string): { digest(encoding: string): string } }
   export function randomUUID(): string
+  export function randomBytes(size: number): { toString(encoding: string): string }
+}
+declare module 'node:fs/promises' {
+  interface Stats {
+    isDirectory(): boolean
+    isSymbolicLink(): boolean
+  }
+  export function lstat(path: string): Promise<Stats>
+  export function stat(path: string): Promise<Stats>
+  export function realpath(path: string): Promise<string>
+  export function readFile(path: string, encoding: 'utf8'): Promise<string>
+  export function rename(from: string, to: string): Promise<void>
+  export function rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>
 }

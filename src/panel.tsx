@@ -102,6 +102,11 @@ async function setAllowAll(link: LinkView, on: boolean): Promise<void> {
   await refresh()
 }
 
+async function setAllowAdd(link: LinkView, on: boolean): Promise<void> {
+  await plugin.request('link.addProjects.allow', { link_id: link.link_id, on })
+  await refresh()
+}
+
 function setOpen(linkId: string, open: boolean): void {
   set(projectsOpen, { ...read(projectsOpen), [linkId]: open })
 }
@@ -188,6 +193,7 @@ function linkCard(link: LinkView) {
             </Stack>
           </Collapsible>
         ) : null}
+        {!revoked ? addProjectsSection(link, t) : null}
         <Row gap="xs">
           <Button variant={asking ? 'solid' : 'outline'} tone="danger" size="sm" onPress={() => void unlink(link.link_id)}>
             {revoked ? t.remove : asking ? t.unlinkConfirm : t.unlink}
@@ -200,6 +206,30 @@ function linkCard(link: LinkView) {
         </Row>
       </Stack>
     </Card>
+  )
+}
+
+/** "Allow adding projects" (dev#2424): off by default; it can only be turned on once the clone folder is set and valid. */
+function addProjectsSection(link: LinkView, t: ReturnType<typeof strings>) {
+  const root = read(state)?.clone_root ?? { configured: false, valid: false }
+  return (
+    <Stack gap="xs">
+      <Switch
+        label={t.allowAdd}
+        checked={link.allow_add_projects}
+        disabled={!link.allow_add_projects && !root.valid}
+        onChange={(on: boolean) => void setAllowAdd(link, on)}
+      />
+      {!root.valid ? (
+        <Text muted size="xs">{root.configured ? t.allowAddBadRoot : t.allowAddNoRoot}</Text>
+      ) : link.allow_add_projects ? (
+        <Callout tone="warning" title={t.allowAddWarningTitle}>
+          <Text size="xs">{t.allowAddWarning}</Text>
+        </Callout>
+      ) : (
+        <Text muted size="xs">{t.allowAddHelp}</Text>
+      )}
+    </Stack>
   )
 }
 

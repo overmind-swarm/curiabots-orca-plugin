@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { ExecFn } from '../src/cli.ts'
+import type { GitFn } from '../src/addProject.ts'
 import { Plugin } from '../src/plugin.ts'
 import type { PanelState } from '../src/plugin.ts'
 import { FakeHost } from './fake-host.ts'
@@ -35,6 +36,11 @@ export interface Harness {
   worktreeShow: (selector: string) => Record<string, unknown> | null
   /** `orca worktree rm`: what the CLI answers (a JSON failure is thrown like the real non-zero exit). */
   rmReply: { ok: true; result: Record<string, unknown> } | { ok: false; error: { code: string; message: string } }
+  /** `orca repo add --path <p>`: what the CLI answers (a JSON failure is thrown like the real non-zero exit). */
+  repoAddReply: (path: string) => { ok: true; result: Record<string, unknown> } | { ok: false; error: { code: string; message: string } }
+  /** Every git run (add_project's clone), and what it does: by default it fails, so no test clones by accident. */
+  gitCalls: string[][]
+  git: GitFn
   restart(): Promise<Plugin>
   restartWith(start: (plugin: Plugin) => Promise<void>): Promise<Plugin>
   link(linkId: string, token: string): Promise<void>
@@ -116,7 +122,16 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
       }
       return { stdout: JSON.stringify(h.rmReply), stderr: '' }
     }
+    if (args[0] === 'repo' && args[1] === 'add') {
+      const reply = h.repoAddReply(args[args.indexOf('--path') + 1]!)
+      if (!reply.ok) throw Object.assign(new Error('Command failed'), { stdout: JSON.stringify(reply), stderr: '' })
+      return { stdout: JSON.stringify(reply), stderr: '' }
+    }
     return { stdout: JSON.stringify({ ok: true }), stderr: '' }
+  }
+  const git: GitFn = async (args, timeoutMs) => {
+    h.gitCalls.push(args)
+    return h.git(args, timeoutMs)
   }
   const states: PanelState[] = []
   const make = () =>
@@ -129,6 +144,7 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
       newSocket: (url) => new (globalThis as any).WebSocket(url),
       fetchFn: fetch,
       exec,
+      git,
       timing: { ...FAST, ...options.timing },
       jobTiming: { stabilizeMs: options.stabilizeMs ?? 60, reconcileMs: 3_600_000, graceMs: 0 },
       random: () => 0.5,
@@ -158,6 +174,11 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
       }
     },
     rmReply: { ok: true, result: { removed: true, catalogVersion: { epoch: 'e', sequence: 1 } } },
+    repoAddReply: (path) => ({ ok: true, result: { repo: { id: 'repo-new', path, displayName: path.split('/').pop(), kind: 'git' } } }),
+    gitCalls: [],
+    git: async () => {
+      throw Object.assign(new Error('git not faked in this test'), { stderr: 'fatal: not faked' })
+    },
     async restart() {
       h.plugin.dispose()
       h.plugin = make()

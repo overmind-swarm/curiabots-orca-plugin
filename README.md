@@ -35,7 +35,7 @@ Orca installs the newest `vX.Y.Z` tag and shows the permissions the plugin asks 
 | `storage:own` | Keep the installation id, links, jobs and the outbox of pending notices. |
 | `settings:own` | Read the plugin settings. |
 
-It does **not** ask for automations or session history, and it never receives shell commands from the cloud: it only understands six commands (`start_job`, `get_job`, `read_output`, `send`, `stop`, `remove_workspace`). `remove_workspace` deletes the worktree of one job, and only that worktree (never the repository's main checkout), with `orca worktree rm`; the CuriaBots app sends it only when you press "Delete" in the job screen and confirm (like `start_job` and `send`, the plugin trusts the linked CuriaBots service for this: it cannot check the confirmation itself). Without "force" Orca refuses to delete a worktree with uncommitted changes, and the local branch is kept unless Orca can prove it is merged.
+It does **not** ask for automations or session history, and it never receives shell commands from the cloud: it only understands seven commands (`start_job`, `get_job`, `read_output`, `send`, `stop`, `remove_workspace`, `add_project`; the last one only if you turn it on, see [Add a project](#add-a-project)). `remove_workspace` deletes the worktree of one job, and only that worktree (never the repository's main checkout), with `orca worktree rm`; the CuriaBots app sends it only when you press "Delete" in the job screen and confirm (like `start_job` and `send`, the plugin trusts the linked CuriaBots service for this: it cannot check the confirmation itself). Without "force" Orca refuses to delete a worktree with uncommitted changes, and the local branch is kept unless Orca can prove it is merged.
 
 ## Link an agent
 
@@ -56,6 +56,24 @@ Each link has a switch, **Allow all projects**, **off by default**. Turn it on a
 - **Keeping the list current:** the plugin re-reads Orca's project list when a workspace is created or removed and every 60 seconds (a project added without any workspace raises no event), and sends a new `projects` message only if the list changed. `start_job` additionally checks the project against Orca's live list at that moment, so a stale announcement never widens what can be started, and a project that is not in `project.list` (a path, a folder, a hidden one, another host's id) is always refused. If Orca cannot list projects, `start_job` fails with `orca_unavailable` and the last announced list is kept.
 - Turning it off goes back to your explicit list, which is kept untouched. Links made with 0.1.x load with it off.
 
+### Add a project
+
+Your agent can ask this Orca to clone a Git repository and add it as a project (`add_project`, from 0.9.0). It is **off** unless you turn on two things, both on this computer:
+
+1. The setting **Clone folder for new projects**: an absolute path to an existing folder. Every clone goes into a new folder directly inside it.
+2. The switch **Allow adding projects** of the link (off by default; it can only be turned on once the folder is valid). Turning it on or off reconnects the link so CuriaBots learns it at once.
+
+What the plugin enforces, whatever the service asks:
+
+- Only `https://` and SSH (`git@host:path`, `ssh://`) URLs, without credentials in them. `file://`, local paths, `git://`, `http://`, `ext::` and the rest are refused, and git runs with only the https and ssh transports allowed (also for anything the clone is redirected to), without submodules and without ever prompting. The clone uses this computer's own git credentials; none are sent.
+- The service names at most **one folder** (`directory`, by default the repository's name), never a path: no `/`, no `..`, no leading dot. A symbolic link at the destination is refused, and the result must resolve inside the clone folder.
+- It clones into a temporary folder and renames it at the end: a failure or a timeout (80 s) leaves nothing behind. One clone at a time.
+- If that folder already holds the same repository (same `origin`), it is only registered again (idempotent); another repository or a plain folder there is a `conflict` and nothing is touched. The existing folder's config is read as text: no git command runs in it.
+- It registers the clone with `orca repo add --path <folder> --kind git --json` (an already registered path is not an error).
+- The new project is **not allowed** for the link: tick it under **Allowed projects** (with **Allow all projects** on it is allowed at once, unless hidden). The answer never carries local paths.
+
+CuriaBots asks you to confirm every request in a card before it reaches Orca. Not supported yet: SSH hosts of Orca, and adding a folder that is not a Git repository.
+
 ## Unlink
 
 Press **Unlink** (twice, to confirm) in the panel. The token is deleted, the skill is told, and the agents already running in Orca are left alone. Other links are not affected. If you unlink from CuriaBots instead, the link shows as *revoked* and you can remove it.
@@ -75,6 +93,7 @@ Press **Unlink** (twice, to confirm) in the panel. The token is deleted, the ski
 |---|---|---|
 | Service URL | `https://api.curiabots.com/skills/orca` | Only change it to test another server. https only (http for `localhost`). Applies to links made afterwards. |
 | Orca CLI path | empty | Absolute path of the Orca CLI. Empty = detect. On Linux the `orca` in `PATH` may be the GNOME screen reader, so the plugin first tries `~/.config/orca/linux-orca-cli-shim/orca` and accepts a candidate only if `status --json` answers like Orca. |
+| Clone folder for new projects | empty | Absolute path of an existing folder where `add_project` clones. Empty = adding projects is off for every link. See [Add a project](#add-a-project). |
 | Allow token without keyring | off | See above. |
 
 ## How jobs work
@@ -191,7 +210,7 @@ Orca instala el tag `vX.Y.Z` más reciente y te enseña los permisos que pide el
 | `storage:own` | Guardar el identificador de instalación, las vinculaciones, los jobs y la cola de avisos pendientes. |
 | `settings:own` | Leer los ajustes del plugin. |
 
-**No** pide automatizaciones ni historial de sesiones, y nunca recibe comandos de shell desde la nube: solo entiende seis comandos (`start_job`, `get_job`, `read_output`, `send`, `stop`, `remove_workspace`). `remove_workspace` borra el worktree de un job, y solo ese (nunca el checkout principal del repositorio), con `orca worktree rm`; la app de CuriaBots solo lo envía cuando pulsas «Eliminar» en la pantalla del job y confirmas (como `start_job` y `send`, el plugin confía en el servicio de CuriaBots vinculado para esto: no puede comprobar la confirmación por sí mismo). Sin «forzar», Orca se niega a borrar un worktree con cambios sin confirmar, y la rama local se conserva salvo que Orca demuestre que está integrada.
+**No** pide automatizaciones ni historial de sesiones, y nunca recibe comandos de shell desde la nube: solo entiende siete comandos (`start_job`, `get_job`, `read_output`, `send`, `stop`, `remove_workspace`, `add_project`; el último solo si lo activas, ver [Añadir un proyecto](#añadir-un-proyecto)). `remove_workspace` borra el worktree de un job, y solo ese (nunca el checkout principal del repositorio), con `orca worktree rm`; la app de CuriaBots solo lo envía cuando pulsas «Eliminar» en la pantalla del job y confirmas (como `start_job` y `send`, el plugin confía en el servicio de CuriaBots vinculado para esto: no puede comprobar la confirmación por sí mismo). Sin «forzar», Orca se niega a borrar un worktree con cambios sin confirmar, y la rama local se conserva salvo que Orca demuestre que está integrada.
 
 ### Vincular un agente
 
@@ -212,6 +231,24 @@ Cada vinculación tiene un interruptor, **Permitir todos los proyectos**, **desa
 - **Cómo se mantiene la lista al día:** el plugin relee la lista de proyectos de Orca cuando se crea o se borra un workspace y cada 60 segundos (un proyecto añadido sin workspace no genera evento), y envía un `projects` nuevo solo si la lista cambió. Además `start_job` comprueba el proyecto contra la lista viva de Orca en ese instante, así que un anuncio desfasado nunca amplía lo que se puede lanzar, y un proyecto que no esté en `project.list` (una ruta, una carpeta, uno oculto, el id de otro host) se rechaza siempre. Si Orca no puede listar proyectos, `start_job` falla con `orca_unavailable` y se conserva la última lista anunciada.
 - Al desactivarlo se vuelve a tu lista explícita, que se conserva intacta. Las vinculaciones hechas con 0.1.x cargan con él desactivado.
 
+### Añadir un proyecto
+
+Tu agente puede pedir a este Orca que clone un repositorio Git y lo añada como proyecto (`add_project`, desde 0.9.0). Está **desactivado** salvo que actives dos cosas, las dos en este ordenador:
+
+1. El ajuste **Clone folder for new projects**: ruta absoluta de una carpeta que exista. Cada clon va a una carpeta nueva directamente dentro de ella.
+2. El interruptor **Permitir añadir proyectos** de la vinculación (apagado por defecto; solo se puede encender con la carpeta válida). Al cambiarlo la vinculación se reconecta para que CuriaBots lo sepa al momento.
+
+Lo que impone el plugin, pida lo que pida el servicio:
+
+- Solo URLs `https://` y SSH (`git@host:ruta`, `ssh://`), sin credenciales dentro. `file://`, rutas locales, `git://`, `http://`, `ext::` y el resto se rechazan, y git se ejecuta con solo los transportes https y ssh permitidos (también para lo que redirija el clon), sin submódulos y sin preguntar nunca. El clon usa las credenciales de git de este ordenador; no se envía ninguna.
+- El servicio nombra como mucho **una carpeta** (`directory`, por defecto el nombre del repositorio), nunca una ruta: sin `/`, sin `..`, sin punto inicial. Un enlace simbólico en el destino se rechaza, y el resultado tiene que resolverse dentro de la carpeta de clonado.
+- Clona en una carpeta temporal y la renombra al final: un fallo o un timeout (80 s) no deja nada. Un clon cada vez.
+- Si esa carpeta ya tiene el mismo repositorio (mismo `origin`), solo lo vuelve a registrar (idempotente); otro repositorio o una carpeta cualquiera es `conflict` y no se toca nada. La configuración de la carpeta existente se lee como texto: no se ejecuta git en ella.
+- Registra el clon con `orca repo add --path <carpeta> --kind git --json` (una ruta ya registrada no es un error).
+- El proyecto nuevo **no queda permitido** para la vinculación: márcalo en **Proyectos permitidos** (con **Permitir todos los proyectos** queda permitido al momento, salvo que esté oculto). La respuesta nunca lleva rutas locales.
+
+CuriaBots te pide confirmar cada petición en una tarjeta antes de que llegue a Orca. Aún no se admite: hosts SSH de Orca, ni añadir una carpeta que no sea un repositorio Git.
+
 ### Desvincular
 
 Pulsa **Desvincular** (dos veces, para confirmar) en el panel. Se borra el token, se avisa a la skill y los agentes que ya corren en Orca se quedan como están. Las demás vinculaciones no se tocan. Si desvinculas desde CuriaBots, la vinculación aparece como *revocada* y puedes quitarla.
@@ -231,6 +268,7 @@ Pulsa **Desvincular** (dos veces, para confirmar) en el panel. Se borra el token
 |---|---|---|
 | Service URL | `https://api.curiabots.com/skills/orca` | Solo para probar otro servidor. Solo https (http para `localhost`). Se aplica a las vinculaciones que hagas después. |
 | Orca CLI path | vacío | Ruta absoluta de la CLI de Orca. Vacío = detectarla. En Linux el `orca` del `PATH` puede ser el lector de pantalla de GNOME, así que el plugin prueba antes `~/.config/orca/linux-orca-cli-shim/orca` y solo acepta un candidato si `status --json` responde como Orca. |
+| Clone folder for new projects | vacío | Ruta absoluta de una carpeta existente donde clona `add_project`. Vacío = añadir proyectos está desactivado en todas las vinculaciones. Ver [Añadir un proyecto](#añadir-un-proyecto). |
 | Allow token without keyring | desactivado | Ver arriba. |
 
 ### Cómo funcionan los jobs

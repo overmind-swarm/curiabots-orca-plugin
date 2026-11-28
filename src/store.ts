@@ -30,6 +30,12 @@ export interface LinkRecord {
    * added later, and `allowed_projects` is ignored. Absent in links saved before 0.2.0 = false.
    */
   allow_all_projects?: boolean
+  /**
+   * The service may ask this Orca to clone a Git repository into the clone folder of the settings and add it as a
+   * project (`add_project`, dev#2424). Off by default and absent in links saved before 0.9.0 = false. It never allows
+   * the new project: that stays the user's own choice (or "allow all projects").
+   */
+  allow_add_projects?: boolean
   /** Name of the link in CuriaBots, if the server sent it in `welcome`. */
   link_name?: string
   created_at: number
@@ -95,6 +101,7 @@ export class Store {
     // Links saved by 0.1.x have no flag: they keep their explicit list (migration is the default).
     for (const link of this.links) {
       link.allow_all_projects = link.allow_all_projects === true
+      link.allow_add_projects = link.allow_add_projects === true
       if (!Array.isArray(link.allowed_projects)) link.allowed_projects = []
     }
     for (const link of this.links) {
