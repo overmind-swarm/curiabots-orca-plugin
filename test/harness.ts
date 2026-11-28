@@ -130,6 +130,8 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
     return { stdout: JSON.stringify({ ok: true }), stderr: '' }
   }
   const git: GitFn = async (args, timeoutMs) => {
+    // The query of configured filter drivers before a clone: none, like `git config` exiting 1.
+    if (args[0] === 'config') throw Object.assign(new Error('exit 1'), { code: 1, stdout: '' })
     h.gitCalls.push(args)
     return h.git(args, timeoutMs)
   }

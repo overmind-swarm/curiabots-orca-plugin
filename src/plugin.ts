@@ -16,7 +16,7 @@ import type { LinkStatus, SocketLike, Timing } from './link.ts'
 import { Store, TokenVault, toProjectRefs } from './store.ts'
 import type { AllowedProject, LinkRecord } from './store.ts'
 import { errorCode, errorMessage } from './util.ts'
-import { join } from 'node:path'
+import { isAbsolute, join, sep } from 'node:path'
 import { LINK_ID, validateArgs } from './wire.ts'
 import type { ErrorCode, ProjectRef } from './wire.ts'
 
@@ -113,6 +113,14 @@ export class Plugin {
    * link's explicit list). Persisted in `storage` as `added_projects`.
    */
   private quarantine: { id: string; host_id: string }[] = []
+  /**
+   * Projects inside the clone folder that the user approved (`trusted_projects`). Everything else inside the clone
+   * folder is treated as quarantined too, so losing or resetting the plugin's storage never exposes a pending project
+   * to "allow all projects": it fails closed and asks for approval again.
+   */
+  private trusted: { id: string; host_id: string }[] = []
+  /** The clone folder as configured and as resolved, refreshed before each quarantine decision. */
+  private rootPrefixes: string[] = []
 
   private d: PluginDeps
 
@@ -160,10 +168,12 @@ export class Plugin {
 
   async start(): Promise<void> {
     await this.store.load(this.d.newId)
-    const q = await this.d.host.storage.get('added_projects')
-    this.quarantine = Array.isArray(q)
-      ? (q as unknown[]).filter((p): p is { id: string; host_id: string } => typeof (p as any)?.id === 'string' && typeof (p as any)?.host_id === 'string').slice(0, 500)
-      : []
+    const refs = (raw: unknown) =>
+      Array.isArray(raw)
+        ? (raw as unknown[]).filter((p): p is { id: string; host_id: string } => typeof (p as any)?.id === 'string' && typeof (p as any)?.host_id === 'string').slice(0, 500)
+        : []
+    this.quarantine = refs(await this.d.host.storage.get('added_projects'))
+    this.trusted = refs(await this.d.host.storage.get('trusted_projects'))
     this.jobs.init()
     for (const link of this.store.links) if (!link.revoked) await this.connect(link)
     this.changed()
@@ -444,28 +454,51 @@ export class Plugin {
    * reachable through the explicit list. Never anything that `project.list` does not return.
    */
   async eligibleProjects(): Promise<{ id: string; name: string; host_id: string }[]> {
+    await this.refreshRoots()
     return (await this.listProjects())
       .filter((p) => !p.hidden && !this.isQuarantined(p))
       .slice(0, MAX_ANNOUNCED_PROJECTS)
       .map((p) => ({ id: p.id, name: p.name, host_id: p.host_id }))
   }
 
-  private isQuarantined(p: { id: string; host_id: string }): boolean {
-    return this.quarantine.some((q) => q.id === p.id && q.host_id === p.host_id)
+  /** Pending approval: added by `add_project`, or anywhere inside the clone folder and not approved by the user. */
+  private isQuarantined(p: { id: string; host_id: string; path?: string }): boolean {
+    const same = (q: { id: string; host_id: string }) => q.id === p.id && q.host_id === p.host_id
+    if (this.quarantine.some(same)) return true
+    if (p.host_id !== 'local' || typeof p.path !== 'string' || this.trusted.some(same)) return false
+    return this.rootPrefixes.some((root) => p.path === root || p.path!.startsWith(root.endsWith(sep) ? root : root + sep))
+  }
+
+  private async refreshRoots(): Promise<void> {
+    const configured = (await this.settings()).cloneRoot
+    const raw = typeof configured === 'string' ? configured.trim().replace(/[\\/]+$/, '') : ''
+    const resolved = await resolveRoot(configured)
+    this.rootPrefixes = [...new Set([raw && isAbsolute(raw) ? raw : '', resolved.ok ? resolved.root : ''].filter(Boolean))]
   }
 
   private async saveQuarantine(): Promise<void> {
-    try {
-      await this.d.host.storage.set('added_projects', this.quarantine)
-    } catch (error) {
-      this.log('storage.write_failed', { key: 'added_projects', error: errorMessage(error) })
+    for (const [key, value] of [['added_projects', this.quarantine], ['trusted_projects', this.trusted]] as const) {
+      try {
+        await this.d.host.storage.set(key, value)
+      } catch (error) {
+        this.log('storage.write_failed', { key, error: errorMessage(error) })
+      }
+    }
+  }
+
+  /** Approves a project: out of the explicit quarantine, and trusted if it lives inside the clone folder. */
+  private approve(p: { id: string; host_id: string }): void {
+    this.quarantine = this.quarantine.filter((q) => !(q.id === p.id && q.host_id === p.host_id))
+    if (!this.trusted.some((t) => t.id === p.id && t.host_id === p.host_id)) {
+      this.trusted.push({ id: p.id, host_id: p.host_id })
+      if (this.trusted.length > 500) this.trusted.splice(0, this.trusted.length - 500)
     }
   }
 
   /** The quarantined projects Orca still lists, with their names, for the panel. */
   private async pendingAdded(): Promise<{ id: string; name: string; host_id: string }[]> {
-    if (this.quarantine.length === 0) return []
     try {
+      await this.refreshRoots()
       return (await this.listProjects()).filter((p) => this.isQuarantined(p)).map((p) => ({ id: p.id, name: p.name, host_id: p.host_id }))
     } catch {
       return []
@@ -474,9 +507,10 @@ export class Plugin {
 
   /** The user approves a project `add_project` added: "allow all projects" may include it from now on. */
   async trustProject(id: string, hostId: string): Promise<boolean> {
-    const before = this.quarantine.length
-    this.quarantine = this.quarantine.filter((q) => !(q.id === id && q.host_id === hostId))
-    if (this.quarantine.length === before) return false
+    await this.refreshRoots()
+    const known = (await this.listProjects().catch(() => [])).find((p) => p.id === id && p.host_id === hostId)
+    if (!this.isQuarantined(known ?? { id, host_id: hostId })) return false
+    this.approve({ id, host_id: hostId })
     await this.saveQuarantine()
     this.log('projects.trusted', {})
     void this.refreshAllProjects()
@@ -646,7 +680,7 @@ export class Plugin {
         // The clone stays in the clone folder: a retry finds it and only registers it.
         return fail({ code: errorCode(error) ?? 'failed', message: errorMessage(error) })
       }
-      let listed: { id: string; name: string; host_id: string; hidden: boolean } | undefined
+      let listed: { id: string; name: string; host_id: string; path: string; hidden: boolean } | undefined
       try {
         listed = (await this.listProjects()).find((p) => p.host_id === 'local' && (p.path === dest || p.path === repo.path))
       } catch {
@@ -656,13 +690,14 @@ export class Plugin {
         ? { id: listed.id, name: listed.name, host_id: listed.host_id }
         : { id: repo.id, name: repo.name || directory, host_id: 'local' }
       // A project Orca did not have before waits for the user's approval, even with "allow all projects".
-      if (!alreadyRegistered && !this.isQuarantined(project)) {
+      await this.refreshRoots()
+      if (!alreadyRegistered && !this.quarantine.some((q) => q.id === project.id && q.host_id === project.host_id)) {
         this.quarantine.push({ id: project.id, host_id: project.host_id })
         if (this.quarantine.length > 500) this.quarantine.splice(0, this.quarantine.length - 500)
         await this.saveQuarantine()
       }
       const allowed =
-        (link.allow_all_projects === true && listed !== undefined && !listed.hidden && !this.isQuarantined(project)) ||
+        (link.allow_all_projects === true && listed !== undefined && !listed.hidden && !this.isQuarantined({ ...project, path: listed.path })) ||
         link.allowed_projects.some((p) => p.id === project.id && p.host_id === project.host_id)
       this.log('add_project.done', { link_id: linkId, cloned, already_registered: alreadyRegistered, listed: Boolean(listed), allowed })
       void this.refreshAllProjects()
@@ -681,6 +716,7 @@ export class Plugin {
     const link = this.store.link(linkId)
     if (!link || link.revoked) return false
     const known = await this.listProjects()
+    await this.refreshRoots()
     const allowed: AllowedProject[] = []
     for (const w of wanted) {
       const match = known.find((k) => k.id === w.id && k.host_id === w.host_id)
@@ -690,9 +726,10 @@ export class Plugin {
     }
     link.allowed_projects = allowed
     await this.store.saveLinks()
-    // Ticking a project the bot added is the user's approval of it.
-    if (allowed.some((a) => this.isQuarantined(a))) {
-      this.quarantine = this.quarantine.filter((q) => !allowed.some((a) => a.id === q.id && a.host_id === q.host_id))
+    // Ticking a pending project is the user's approval of it.
+    const pending = allowed.filter((a) => this.isQuarantined(known.find((k) => k.id === a.id && k.host_id === a.host_id) ?? a))
+    if (pending.length > 0) {
+      for (const a of pending) this.approve(a)
       await this.saveQuarantine()
       void this.refreshAllProjects()
     }

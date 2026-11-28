@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { cloneArgs, defaultGit, gitEnv, isLocalHost, originUrlOf, parseGitUrl, sameRemote } from '../src/addProject.ts'
+import { cloneArgs, configuredFilters, defaultGit, filterNames, gitEnv, isLocalHost, originUrlOf, parseGitUrl, sameRemote } from '../src/addProject.ts'
 import { repoFailure } from '../src/cli.ts'
 import { validateArgs } from '../src/wire.ts'
 import { until } from './fake-skill.ts'
@@ -104,6 +104,16 @@ test('URLs: only https and ssh, never credentials, local paths, file://, ext:: o
     'git@10.1.2.3:acme/widget.git',
     'git@gitlab.internal:acme/widget.git',
     'ssh://git@127.0.0.1/acme/widget',
+    'git@0x7f.0.0.1:acme/widget.git',
+    'ssh://git@0x7f.0.0.1/acme/widget.git',
+    'git@0xa9.0xfe.169.254:acme/widget.git',
+    'ssh://git@0177.0.0.1/acme/widget',
+    'ssh://git@2130706433/acme/widget',
+    'https://198.18.0.1/acme/widget.git',
+    'https://[64:ff9b::7f00:1]/acme/widget.git',
+    'https://[::7f00:1]/acme/widget.git',
+    'https://[::ffff:127.0.0.1]/acme/widget.git',
+    'https://0.0.0.0/acme/widget.git',
     '',
     'x'.repeat(600)
   ]) {
@@ -131,10 +141,56 @@ test('git runs with only https and ssh allowed, no submodules, no prompt, and --
   assert.deepEqual(args.slice(-3), ['--', 'https://h/a/b', '/root/.tmp'])
   const env = gitEnv({ PATH: '/bin', GIT_DIR: '/elsewhere', NODE_CHANNEL_FD: '3', ELECTRON_RUN_AS_NODE: '1' })
   assert.equal(env.GIT_TERMINAL_PROMPT, '0')
+  assert.equal(env.GIT_LFS_SKIP_SMUDGE, '1')
   assert.equal(env.GIT_PROTOCOL_FROM_USER, '0')
   assert.equal(env.GIT_DIR, undefined)
   assert.equal(env.NODE_CHANNEL_FD, undefined)
   assert.equal(env.ELECTRON_RUN_AS_NODE, undefined)
+})
+
+test('every filter driver the user configured is switched off for the checkout (git-lfs fetches outside the host check)', async () => {
+  const args = cloneArgs('https://h/a/b', '/root/.tmp', ['lfs', 'crypt'])
+  for (const name of ['lfs', 'crypt']) {
+    for (const v of [`filter.${name}.smudge=`, `filter.${name}.process=`, `filter.${name}.required=false`]) {
+      assert.equal(args[args.indexOf(v) - 1], '-c', v)
+    }
+  }
+  assert.ok(args.indexOf('filter.lfs.smudge=') < args.indexOf('clone'), 'before the subcommand')
+  assert.ok(cloneArgs('https://h/a/b', '/x', []).includes('filter.lfs.process='), 'lfs always')
+  assert.deepEqual(filterNames('filter.lfs.clean\ngit-lfs clean -- %f\0filter.lfs.process\ngit-lfs filter-process\0filter.git-crypt.smudge\n"git-crypt" smudge\0'), ['lfs', 'git-crypt'])
+  assert.equal(filterNames('filter.we ird.smudge\nx\0'), null, 'a name that cannot be passed safely refuses the clone')
+  assert.deepEqual(await configuredFilters(async () => { throw Object.assign(new Error('exit 1'), { code: 1 }) }), [], 'no filter configured')
+  assert.equal(await configuredFilters(async () => { throw Object.assign(new Error('boom'), { code: 128 }) }), null)
+})
+
+test('with real git and git-lfs configured, a repository whose .lfsconfig points at the LAN is cloned without contacting it', { skip: process.platform === 'win32' }, async () => {
+  // A local "remote" (file:// is fine for the test only, through git directly) with an LFS pointer and a hostile lfs.url.
+  const { execFileSync } = await import('node:child_process')
+  const src = join(root, 'src-repo')
+  await mkdir(src)
+  const g = (...a: string[]) => execFileSync('git', ['-C', src, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a])
+  g('init', '-q')
+  await writeFile(join(src, '.gitattributes'), 'big.bin filter=lfs diff=lfs merge=lfs -text\n')
+  await writeFile(join(src, '.lfsconfig'), '[lfs]\n\turl = http://127.0.0.1:9/never\n')
+  await writeFile(join(src, 'big.bin'), 'version https://git-lfs.github.com/spec/v1\noid sha256:' + 'a'.repeat(64) + '\nsize 10\n')
+  g('add', '-A')
+  g('commit', '-qm', 'x')
+  // A filter that would leave a trace if git ran it during the checkout.
+  const marker = join(root, 'smudged')
+  const home = join(root, 'home')
+  await mkdir(home)
+  await writeFile(join(home, '.gitconfig'), `[filter "lfs"]\n\tsmudge = sh -c 'touch ${marker}; cat'\n\trequired = true\n`)
+  const savedHome = process.env.HOME
+  process.env.HOME = home
+  try {
+    const filters = await configuredFilters(defaultGit)
+    assert.deepEqual(filters, ['lfs'])
+    const args = cloneArgs(`file://${src}`, join(root, 'out'), filters!).map((a) => (a === 'protocol.allow=never' ? 'protocol.allow=always' : a))
+    await defaultGit(args, 30_000)
+    assert.deepEqual((await readdir(root)).filter((f) => f === 'smudged'), [], 'the configured smudge filter never ran')
+  } finally {
+    process.env.HOME = savedHome
+  }
 })
 
 test('origin is read from .git/config as text, and remotes compare without .git and trailing slash', () => {
@@ -217,6 +273,21 @@ test('with allow all projects the new project still waits for the user: not allo
   await until(() => h!.skill.connOf('link-a')!.received.some((m: any) => m.type === 'projects' && m.projects.some((p: any) => p.id === 'proj-1')), 3000, 'projects announced')
 })
 
+test('losing the plugin storage keeps projects inside the clone folder in quarantine (fails closed)', async () => {
+  await ready()
+  await h!.plugin.setAllowAll('link-a', true)
+  await h!.skill.command('link-a', 'add_project', { url: URL }, 5000)
+  h!.host.store.delete('added_projects')
+  h!.host.store.delete('trusted_projects')
+  await h!.restart()
+  await until(() => (h as any).statusOf('link-a') === 'online', 3000)
+  assert.ok(!(await h!.plugin.eligibleProjects()).some((p) => p.id === 'proj-1'), 'still out of allow-all')
+  assert.deepEqual((await h!.plugin.getState()).added_projects.map((p) => p.id), ['proj-1'])
+  assert.equal(await h!.plugin.trustProject('proj-1', 'local'), true)
+  assert.ok((await h!.plugin.eligibleProjects()).some((p) => p.id === 'proj-1'), 'approved: trusted from now on')
+  assert.ok((h!.host.store.get('trusted_projects') as any[]).some((p) => p.id === 'proj-1'))
+})
+
 test('ticking a project the agent added in a link\'s explicit list approves it', async () => {
   await ready()
   await h!.skill.command('link-a', 'add_project', { url: URL }, 5000)
@@ -225,14 +296,16 @@ test('ticking a project the agent added in a link\'s explicit list approves it',
   assert.deepEqual((await h!.plugin.getState()).added_projects, [])
 })
 
-test('a project Orca already had is not put in quarantine', async () => {
+test('a project Orca already had is not recorded as added, but inside the clone folder it still waits for approval', async () => {
   await ready()
   await mkdir(join(root, 'widget', '.git'), { recursive: true })
   await writeFile(join(root, 'widget', '.git', 'config'), `[remote "origin"]\n\turl = ${URL}\n`)
   h!.repoAddReply(join(root, 'widget')) // the user had added it to Orca by hand
   const r = await h!.skill.command('link-a', 'add_project', { url: URL }, 5000)
   assert.equal(r.data.already_registered, true)
-  assert.deepEqual((await h!.plugin.getState()).added_projects, [])
+  assert.ok(!((h!.host.store.get('added_projects') as any[]) ?? []).some((p) => p.id === 'proj-1'), 'not recorded as added by the agent')
+  // Fail closed: anything inside the clone folder needs the user's approval once, whoever put it there.
+  assert.deepEqual((await h!.plugin.getState()).added_projects.map((p) => p.id), ['proj-1'])
 })
 
 test('the real git runner kills the whole process group at the time limit', { skip: process.platform === 'win32' }, async () => {

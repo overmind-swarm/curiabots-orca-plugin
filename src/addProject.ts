@@ -31,18 +31,30 @@ export type GitUrl = { kind: 'https' | 'ssh'; url: string; repoName: string }
  * private address is not caught here.
  */
 export function isLocalHost(rawHost: string): boolean {
-  const host = rawHost.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
+  // Every form goes through the WHATWG host parser first, as https URLs already do: `0x7f.0.0.1`, `0177.1` or
+  // `2130706433` become `127.0.0.1`, and IPv6 is compressed. ssh would otherwise resolve those itself (inet_aton).
+  let host: string
+  try {
+    host = new URL(`https://${rawHost.includes(':') && !rawHost.startsWith('[') ? `[${rawHost}]` : rawHost}/`).hostname.toLowerCase()
+  } catch {
+    return true
+  }
+  host = host.replace(/^\[|\]$/g, '').replace(/\.$/, '')
   if (host.includes(':')) {
-    // IPv6: loopback, unspecified, unique local (fc00::/7), link-local (fe80::/10) and IPv4-mapped.
-    return host === '::1' || host === '::' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith('::ffff:')
+    // IPv6: loopback, unspecified, IPv4-compatible and -mapped (`::…`), unique local (fc00::/7), link-local
+    // (fe80::/10), NAT64 (64:ff9b::/96) and multicast.
+    return host.startsWith('::') || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith('64:ff9b:') || host.startsWith('ff')
   }
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
   if (v4) {
     const [a, b] = [Number(v4[1]), Number(v4[2])]
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224
+    return (
+      a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19)) || a >= 224
+    )
   }
-  // Numbers that are not a dotted quad (decimal, hex, short forms) can still mean an address: refused.
-  if (/^[0-9.x]+$/.test(host)) return true
+  // Anything still all numeric labels (in any base) is an address in disguise: refused.
+  if (host.split('.').every((label) => /^(0x[0-9a-f]*|[0-9]+)$/i.test(label))) return true
   if (!host.includes('.')) return true // single-label names: intranet, localhost
   return /(^|\.)(localhost|local|internal|lan|home\.arpa|intranet|corp)$/.test(host)
 }
@@ -132,6 +144,8 @@ export function gitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv 
   out.GCM_INTERACTIVE = 'never'
   // Transports that git allows only "from the user" (ext, fd...) are refused even if a config enables them.
   out.GIT_PROTOCOL_FROM_USER = '0'
+  // git-lfs fetches with its own HTTP client, from the `lfs.url` a repository can set: no download during the clone.
+  out.GIT_LFS_SKIP_SMUDGE = '1'
   return out
 }
 
@@ -152,6 +166,13 @@ export const defaultGit: GitFn = (args, timeoutMs) =>
     let timedOut = false
     child.stdout?.on('data', (d: unknown) => (stdout = (stdout + String(d)).slice(-MAX)))
     child.stderr?.on('data', (d: unknown) => (stderr = (stderr + String(d)).slice(-MAX)))
+    let settled = false
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      fn()
+    }
     const timer = setTimeout(() => {
       timedOut = true
       try {
@@ -164,31 +185,68 @@ export const defaultGit: GitFn = (args, timeoutMs) =>
           /* already gone */
         }
       }
+      // Do not wait for 'close': a process that left the group could keep the pipes open forever.
+      settle(() => reject(Object.assign(new Error('git timed out'), { stdout, stderr, killed: true, signal: 'SIGKILL' })))
     }, timeoutMs)
-    child.on('error', (error: Error & { code?: unknown }) => {
-      clearTimeout(timer)
-      reject(Object.assign(error, { stdout, stderr }))
-    })
-    child.on('close', (code: number | null, signal: string | null) => {
-      clearTimeout(timer)
-      if (timedOut) reject(Object.assign(new Error('git timed out'), { stdout, stderr, killed: true, signal: 'SIGKILL' }))
-      else if (code === 0) resolve({ stdout, stderr })
-      else reject(Object.assign(new Error(`git exited with ${code ?? signal}`), { stdout, stderr, code, signal: signal ?? undefined }))
-    })
+    child.on('error', (error: Error & { code?: unknown }) => settle(() => reject(Object.assign(error, { stdout, stderr }))))
+    child.on('close', (code: number | null, signal: string | null) =>
+      settle(() => {
+        if (timedOut) reject(Object.assign(new Error('git timed out'), { stdout, stderr, killed: true, signal: 'SIGKILL' }))
+        else if (code === 0) resolve({ stdout, stderr })
+        else reject(Object.assign(new Error(`git exited with ${code ?? signal}`), { stdout, stderr, code, signal: signal ?? undefined }))
+      })
+    )
   })
 
 /**
  * The arguments of the clone. Only https and ssh transports are allowed for the clone itself and anything it could be
  * redirected to, submodules are not cloned, and `--` keeps the URL and the folder from being read as options.
  */
-export function cloneArgs(url: string, dest: string): string[] {
+export function cloneArgs(url: string, dest: string, filters: readonly string[] = ['lfs']): string[] {
+  // Every filter driver the user has configured (git-lfs, git-crypt...) is switched off for the checkout: a repository's
+  // `.gitattributes` can name one, and a driver is a program with its own network access (git-lfs reads `lfs.url` from
+  // the repository's `.lfsconfig`), outside `protocol.allow` and the host check. Files stay as committed (LFS pointers).
+  const off = [...new Set(['lfs', ...filters])].flatMap((name) => [
+    '-c', `filter.${name}.smudge=`,
+    '-c', `filter.${name}.process=`,
+    '-c', `filter.${name}.required=false`
+  ])
   return [
     '-c', 'protocol.allow=never',
     '-c', 'protocol.https.allow=always',
     '-c', 'protocol.ssh.allow=always',
     '-c', 'submodule.recurse=false',
+    ...off,
     'clone', '--quiet', '--no-recurse-submodules', '--', url, dest
   ]
+}
+
+/**
+ * Names of the filter drivers in `git config --null --get-regexp` output (`<key>\n<value>\0` per entry, keys
+ * `filter.<name>.<var>`); null when one cannot be passed back safely, so the clone is refused rather than run with it.
+ */
+export function filterNames(configList: string): string[] | null {
+  const names = new Set<string>()
+  for (const entry of configList.split('\0')) {
+    if (!entry) continue
+    const key = entry.split('\n', 1)[0] ?? ''
+    const m = /^filter\.(.+)\.[A-Za-z0-9-]+$/i.exec(key)
+    if (!m) continue
+    if (!/^[A-Za-z0-9._-]{1,100}$/.test(m[1]!)) return null
+    names.add(m[1]!)
+  }
+  return [...names].slice(0, 50)
+}
+
+/** The filter drivers git would run for this user: from `git config --get-regexp ^filter\.` (exit 1 = none). */
+export async function configuredFilters(git: GitFn): Promise<string[] | null> {
+  try {
+    return filterNames((await git(['config', '--null', '--get-regexp', '^filter\\.'], 10_000)).stdout)
+  } catch (error) {
+    const e = error as { code?: unknown; stdout?: unknown }
+    if (e.code === 1) return []
+    return null
+  }
 }
 
 export type AddFailure = { code: 'forbidden' | 'invalid_args' | 'conflict' | 'timeout' | 'failed'; message: string }
@@ -254,10 +312,12 @@ export async function insideRoot(root: string, dest: string): Promise<boolean> {
 
 /** Clones into a temporary folder next to the destination and renames it at the end: a failure leaves nothing behind. */
 export async function cloneInto(git: GitFn, root: string, dest: string, url: string): Promise<{ ok: true } | { ok: false; failure: AddFailure }> {
+  const filters = await configuredFilters(git)
+  if (!filters) return { ok: false, failure: { code: 'failed', message: 'the git configuration of this computer has a filter driver that cannot be switched off safely; nothing was cloned' } }
   const temp = join(root, TEMP_PREFIX + randomBytes(6).toString('hex'))
   const cleanup = () => rm(temp, { recursive: true, force: true }).catch(() => undefined)
   try {
-    await git(cloneArgs(url, temp), CLONE_TIMEOUT_MS)
+    await git(cloneArgs(url, temp, filters), CLONE_TIMEOUT_MS)
   } catch (error) {
     await cleanup()
     const e = error as { killed?: boolean; signal?: string; code?: unknown; stderr?: unknown }
