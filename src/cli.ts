@@ -196,6 +196,26 @@ export class OrcaCli {
   }
 
   /**
+   * `orca agent installed --json`: the agent ids Orca can launch on this host (installed and enabled in its settings).
+   * Null when it cannot be read; the caller then keeps its own error.
+   */
+  async installedAgents(): Promise<string[] | null> {
+    const info = await this.resolve()
+    if (!info) return null
+    try {
+      const { stdout } = await this.exec(info.path, ['agent', 'installed', '--json'], CLI_TIMEOUT_MS)
+      const agents = (JSON.parse(stdout) as { result?: { agents?: unknown } }).result?.agents
+      if (!Array.isArray(agents)) return null
+      return agents
+        .map((x) => (x as { id?: unknown })?.id)
+        .filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(id))
+        .slice(0, 100)
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * `orca terminal close --terminal <id>`: the fallback of `stop` for a terminal the plugin API refuses to
    * close (one this plugin no longer owns, for example after an update or a reinstall). Same error
    * mapping as `send`; a terminal that no longer exists is not an error for the caller to decide here:

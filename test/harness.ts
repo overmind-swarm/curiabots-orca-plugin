@@ -29,6 +29,8 @@ export interface Harness {
   workspaces: Set<string>
   /** `sendFails` makes `orca terminal send` fail like the real CLI: JSON on stdout and a non-zero exit. */
   showReply: { agentIdentity: string | null; connected: boolean; writable: boolean; agentWait?: unknown }
+  /** `orca agent installed`: the agent ids Orca can launch (null = the CLI call fails). */
+  installedAgents: string[] | null
   /** `orca worktree show`: given the selector, the worktree Orca resolves (null = selector_not_found). */
   worktreeShow: (selector: string) => Record<string, unknown> | null
   /** `orca worktree rm`: what the CLI answers (a JSON failure is thrown like the real non-zero exit). */
@@ -77,6 +79,10 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
     execCalls.push({ file, args })
     if (args[0] === 'status') {
       return { stdout: JSON.stringify({ ok: true, result: { runtime: { appVersion: '1.4.267' } } }), stderr: '' }
+    }
+    if (args[0] === 'agent' && args[1] === 'installed') {
+      if (!h.installedAgents) throw Object.assign(new Error('Command failed'), { stdout: '', stderr: 'boom' })
+      return { stdout: JSON.stringify({ ok: true, result: { agents: h.installedAgents.map((id) => ({ id, name: id })) } }), stderr: '' }
     }
     if (args[0] === 'terminal' && args[1] === 'show') {
       return { stdout: JSON.stringify({ ok: true, result: { terminal: { ...h.showReply } } }), stderr: '' }
@@ -139,6 +145,7 @@ export async function setup(options: { timing?: Partial<typeof FAST>; stabilizeM
     closeFails: null,
     workspaces,
     showReply: { agentIdentity: 'claude', connected: true, writable: true },
+    installedAgents: ['claude', 'copilot'],
     worktreeShow: (selector) => {
       const m = /^identity:wt2:local:(ws-\d+)$/.exec(selector)
       if (!m) return null

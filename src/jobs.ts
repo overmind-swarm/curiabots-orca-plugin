@@ -310,6 +310,15 @@ export class JobManager {
       job.updated_at = this.d.now()
       await this.d.store.saveJobs(linkId)
       this.log('job.start_failed', { link_id: linkId, job_id: job.job_id, error_code: errorCode(error), error: errorMessage(error) })
+      // Orca answers a disabled or missing agent with a bare `action_failed`: ask the CLI which agents it can launch.
+      if (errorCode(error) === 'action_failed') {
+        const launchable = await this.d.cli.installedAgents()
+        if (launchable && !launchable.some((id) => id.toLowerCase() === a.agent.toLowerCase())) {
+          return fail('agent_unavailable', `${a.agent} is not enabled or installed in Orca: enable it in Orca's settings, or use another agent`, {
+            agents: launchable
+          })
+        }
+      }
       return mapHostError(error)
     }
   }

@@ -782,3 +782,24 @@ test('send while the agent works: typed after the same proofs; never on a permis
   }
   assert.equal(sends(), 3)
 })
+
+test('start_job of an agent Orca cannot launch (disabled or missing) says so instead of internal', async () => {
+  h = await setup()
+  await h.link('link-a', 'tok_' + 'a'.repeat(40))
+  await h.allow('link-a', ['p1'])
+  h.host.handlers['workspace.create'] = () => {
+    throw Object.assign(new Error('Orca could not complete this action'), { code: 'action_failed' })
+  }
+  h.installedAgents = ['claude', 'copilot']
+  const off = await h.skill.command('link-a', 'start_job', start(JOB1, { agent: 'codex' }))
+  assert.equal(off.error.code, 'agent_unavailable')
+  assert.match(off.error.message, /codex is not enabled or installed in Orca/)
+  assert.deepEqual(off.error.details.agents, ['claude', 'copilot'])
+
+  // an agent Orca can launch keeps the generic error; so does an unreadable list
+  const on = await h.skill.command('link-a', 'start_job', start(JOB2, { agent: 'claude' }))
+  assert.equal(on.error.code, 'internal')
+  h.installedAgents = null
+  const unknown = await h.skill.command('link-a', 'start_job', start(JOB3, { agent: 'codex' }))
+  assert.equal(unknown.error.code, 'internal')
+})

@@ -20,6 +20,7 @@ export type ErrorCode =
   | 'timeout'
   | 'needs_option'
   | 'has_changes'
+  | 'agent_unavailable'
   | 'internal'
 
 export type JobState =
