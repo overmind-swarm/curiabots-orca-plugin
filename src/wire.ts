@@ -1,6 +1,7 @@
 // Wire format of the skill <-> plugin contract (v1). Everything that comes from the server is
 // untrusted: it is parsed and validated here before any other module sees it.
 import { byteLength } from './util.ts'
+import { DIRECTORY, parseGitUrl } from './addProject.ts'
 
 export const PROTOCOL_VERSION = 1
 export const MAX_MESSAGE_BYTES = 256 * 1024
@@ -21,6 +22,7 @@ export type ErrorCode =
   | 'needs_option'
   | 'has_changes'
   | 'agent_unavailable'
+  | 'conflict'
   | 'internal'
 
 export type JobState =
@@ -60,7 +62,7 @@ export interface Limits {
   max_prompt_bytes?: number
 }
 
-export type CommandName = 'start_job' | 'get_job' | 'read_output' | 'send' | 'stop' | 'remove_workspace'
+export type CommandName = 'start_job' | 'get_job' | 'read_output' | 'send' | 'stop' | 'remove_workspace' | 'add_project'
 
 export interface StartJobArgs {
   job_id: string
@@ -91,6 +93,14 @@ export interface RemoveWorkspaceArgs {
   job_id: string
   force: boolean
 }
+/**
+ * Clones `url` into the clone folder the user configured on this computer and registers it in Orca (dev#2424).
+ * `directory` is only the name of one folder inside that root (never a path); by default the repository's name.
+ */
+export interface AddProjectArgs {
+  url: string
+  directory?: string
+}
 export interface CommandArgsMap {
   start_job: StartJobArgs
   get_job: JobArgs
@@ -98,6 +108,7 @@ export interface CommandArgsMap {
   send: SendArgs
   stop: JobArgs
   remove_workspace: RemoveWorkspaceArgs
+  add_project: AddProjectArgs
 }
 
 export type ServerMessage =
@@ -238,6 +249,7 @@ export function validateArgs<N extends CommandName>(
 
 function validateAny(name: CommandName, args: unknown, maxPromptBytes: number): Checked<unknown> {
   if (!isObject(args)) return bad('args must be an object')
+  if (name === 'add_project') return validateAddProject(args)
   const id = jobId(args.job_id)
   if (!id.ok) return id
   switch (name) {
@@ -303,7 +315,18 @@ function validateAny(name: CommandName, args: unknown, maxPromptBytes: number): 
   }
 }
 
-export const COMMAND_NAMES: readonly CommandName[] = ['start_job', 'get_job', 'read_output', 'send', 'stop', 'remove_workspace']
+/** `add_project` takes no job: a URL (https or ssh only) and, optionally, one folder name. Paths are never accepted. */
+function validateAddProject(args: Record<string, unknown>): Checked<AddProjectArgs> {
+  if (!parseGitUrl(args.url)) return bad('invalid url: only https:// and ssh Git URLs without credentials are accepted')
+  const dir = args.directory
+  if (dir === undefined || dir === null || dir === '') return { ok: true, value: { url: args.url as string } }
+  if (typeof dir !== 'string' || !DIRECTORY.test(dir) || dir.endsWith('.lock')) {
+    return bad('invalid directory: one folder name (letters, digits, . _ -), never a path')
+  }
+  return { ok: true, value: { url: args.url as string, directory: dir } }
+}
+
+export const COMMAND_NAMES: readonly CommandName[] = ['start_job', 'get_job', 'read_output', 'send', 'stop', 'remove_workspace', 'add_project']
 export function isCommandName(name: string): name is CommandName {
   return (COMMAND_NAMES as readonly string[]).includes(name)
 }

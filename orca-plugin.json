@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "curiabots",
   "name": "CuriaBots",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Connects Orca to a CuriaBots agent: send work to Orca, with or without an issue, and follow what its agents do.",
   "icon": "assets/icon.png",
   "cover": { "path": "assets/cover.jpg", "alt": "CuriaBots robot logo next to the title CuriaBots para Orca and a one-line description of the connector" },
@@ -41,6 +41,14 @@
         "key": "orcaCliPath",
         "title": "Orca CLI path (optional)",
         "description": "Absolute path of the Orca CLI, used only to reply to agents. Leave empty to detect it. On Linux the 'orca' in PATH may be the GNOME screen reader.",
+        "type": "string",
+        "default": "",
+        "maxLength": 500
+      },
+      {
+        "key": "cloneRoot",
+        "title": "Clone folder for new projects (optional)",
+        "description": "Absolute path of an existing folder. Only if you turn on \"Allow adding projects\" for a link: your agent may then ask to clone a Git repository (https or ssh) into a new folder inside this one and add it to Orca, always after you confirm in CuriaBots. Empty = adding projects is off for every link.",
         "type": "string",
         "default": "",
         "maxLength": 500

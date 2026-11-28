@@ -283,8 +283,29 @@ export class OrcaCli {
     return { preservedBranch: null }
   }
 
+  /**
+   * `orca repo add --path <abs> --kind git --json` (dev#2424). Orca 1.4.277 answers `result.repo` with `id`, `path`,
+   * `displayName` and `kind`; a path that is already a project is not an error: it answers the same repo again.
+   */
+  async repoAdd(path: string): Promise<{ id: string; path: string; name: string }> {
+    // eslint-disable-next-line no-control-regex
+    if (!isAbsolute(path) || /[\u0000-\u001f\u007f]/.test(path) || path.length > 4000) throw cliError('internal', 'bad project path')
+    const parsed = (await this.runJson(['repo', 'add', '--path', path, '--kind', 'git', '--json'], CLI_TIMEOUT_MS, repoFailure)) as {
+      result?: { repo?: Record<string, unknown> }
+    }
+    const repo = parsed.result?.repo
+    if (!repo || typeof repo.id !== 'string' || !repo.id || (repo.kind !== undefined && repo.kind !== 'git')) {
+      throw cliError('failed', 'Orca returned an unexpected answer when adding the project')
+    }
+    return {
+      id: repo.id.slice(0, 200),
+      path: typeof repo.path === 'string' ? repo.path : path,
+      name: typeof repo.displayName === 'string' && repo.displayName ? repo.displayName.slice(0, 200) : ''
+    }
+  }
+
   /** Runs the CLI (resolved path, no shell) and returns its JSON answer; failures become errors of the contract. */
-  private async runJson(args: string[], timeoutMs: number): Promise<object> {
+  private async runJson(args: string[], timeoutMs: number, failure: (code: string | null, message: string) => Error = worktreeFailure): Promise<object> {
     let info = await this.resolve()
     if (!info) info = await this.resolve(true)
     if (!info) throw cliError('cli_unavailable', 'the Orca CLI was not found')
@@ -296,7 +317,7 @@ export class OrcaCli {
       if (e.killed || e.signal === 'SIGTERM') throw cliError('timeout', 'the Orca CLI timed out')
       const code = cliCodeOf(e.stdout, e.stderr)
       if (!code) this.checkedAt = 0
-      throw worktreeFailure(code, cliMessageOf(e.stdout))
+      throw failure(code, cliMessageOf(e.stdout))
     }
     let parsed: { ok?: unknown } | null = null
     try {
@@ -305,7 +326,7 @@ export class OrcaCli {
       throw cliError('failed', 'the Orca CLI answered something that is not JSON')
     }
     if (!parsed || typeof parsed !== 'object') throw cliError('failed', 'the Orca CLI answered something unexpected')
-    if (parsed.ok === false) throw worktreeFailure(cliCodeOf(out.stdout, out.stderr), cliMessageOf(out.stdout))
+    if (parsed.ok === false) throw failure(cliCodeOf(out.stdout, out.stderr), cliMessageOf(out.stdout))
     return parsed
   }
 
@@ -418,6 +439,16 @@ export function worktreeFailure(cliCode: string | null, message: string): Error 
   const mapped = cliFailure(cliCode) as Error & { code?: string }
   if (mapped.code === 'internal' && cliCode) {
     return done('failed', `Orca refused the request (${cliCode})${message ? `: ${scrub(message, 200)}` : ''}`)
+  }
+  return mapped
+}
+
+/** Error mapping of `orca repo add`: never a mute `internal`, never a local path. */
+export function repoFailure(cliCode: string | null, message: string): Error {
+  const done = (code: string, text: string) => Object.assign(cliError(code, text), { cliCode: cliCode ?? undefined })
+  const mapped = cliFailure(cliCode) as Error & { code?: string }
+  if (cliCode && (mapped.code === 'internal' || /runtime_error|not_a_git|invalid/.test(cliCode))) {
+    return done('failed', `Orca could not add the project (${cliCode})${message ? `: ${scrub(message, 200)}` : ''}`)
   }
   return mapped
 }

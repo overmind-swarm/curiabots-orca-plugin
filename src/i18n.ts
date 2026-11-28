@@ -26,6 +26,16 @@ const en = {
   allowAllWarningTitle: 'All projects are allowed',
   allowAllWarning:
     'The agent can launch work in any project of this Orca, including repos with access to production, and in projects you add later (hidden projects excluded). Your own list below is kept for when you turn this off.',
+  addedTitle: 'Projects added by your agent',
+  addedBody: '"Allow all projects" leaves these out until you approve them. Tick one in a link\'s list, or approve it here, only if you trust that repository.',
+  addedTrust: 'Approve',
+  allowAdd: 'Allow adding projects',
+  allowAddHelp: 'Off: the agent cannot add projects here. On: it may ask to clone a Git repository into the clone folder of the settings and add it to Orca, after you confirm in CuriaBots.',
+  allowAddNoRoot: 'To turn it on, first set "Clone folder for new projects" in this plugin\'s settings.',
+  allowAddBadRoot: 'The clone folder in the settings does not exist or is not an absolute path: fix it to turn this on.',
+  allowAddWarningTitle: 'The agent can add projects',
+  allowAddWarning:
+    'After you confirm in CuriaBots, it can clone a repository (https or ssh, with this computer\'s git credentials) into a new folder of the clone folder and add it to Orca. The new project is not allowed for any link until you approve it, even with "Allow all projects".',
   noProjectsFound: 'Orca lists no Git projects.',
   loadProjects: 'Choose projects',
   unlink: 'Unlink',
@@ -91,6 +101,16 @@ const es: Strings = {
   allowAllWarningTitle: 'Todos los proyectos están permitidos',
   allowAllWarning:
     'El agente podrá lanzar trabajo en cualquier proyecto de este Orca, incluidos repos con acceso a producción, y en los proyectos que añadas después (excepto los ocultos). Tu lista propia de abajo se conserva para cuando lo desactives.',
+  addedTitle: 'Proyectos añadidos por tu agente',
+  addedBody: '«Permitir todos los proyectos» los deja fuera hasta que los apruebes. Márcalo en la lista de una vinculación o apruébalo aquí, solo si confías en ese repositorio.',
+  addedTrust: 'Aprobar',
+  allowAdd: 'Permitir añadir proyectos',
+  allowAddHelp: 'Desactivado: el agente no puede añadir proyectos aquí. Activado: puede pedir clonar un repositorio Git en la carpeta de clonado de los ajustes y añadirlo a Orca, tras confirmarlo tú en CuriaBots.',
+  allowAddNoRoot: 'Para activarlo, configura antes «Carpeta de clonado para proyectos nuevos» en los ajustes de este plugin.',
+  allowAddBadRoot: 'La carpeta de clonado de los ajustes no existe o no es una ruta absoluta: corrígela para activarlo.',
+  allowAddWarningTitle: 'El agente puede añadir proyectos',
+  allowAddWarning:
+    'Tras tu confirmación en CuriaBots, puede clonar un repositorio (https o ssh, con las credenciales de git de este ordenador) en una carpeta nueva dentro de la de clonado y añadirlo a Orca. El proyecto nuevo no queda permitido en ninguna vinculación hasta que lo apruebes, ni siquiera con «Permitir todos los proyectos».',
   noProjectsFound: 'Orca no lista ningún proyecto Git.',
   loadProjects: 'Elegir proyectos',
   unlink: 'Desvincular',
