@@ -749,7 +749,7 @@ test('send while the agent works: typed after the same proofs; never on a permis
   assert.match(noEnter.error.message, /always sent with Enter/)
   assert.equal(sends(), 1)
 
-  // any agent takes a message mid-turn (contract §1), always with Enter: its CLI decides this turn or the next
+  // a verified agent takes a message mid-turn (contract §1), always with Enter: its CLI decides this turn or the next
   await h.skill.command('link-a', 'start_job', start(JOB2, { agent: 'codex' }))
   h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_2', state: 'working', title: 't', agent: 'codex', stateStartedAt: 1 }] })
   h.showReply = { agentIdentity: 'codex', connected: true, writable: true }
@@ -770,15 +770,15 @@ test('send while the agent works: typed after the same proofs; never on a permis
   assert.equal(titled.ok, true, JSON.stringify(titled))
   assert.equal(sends(), 3)
 
-  // Gemini CLI and Qwen Code pass typing to a focused interactive shell: never mid-turn
-  for (const agent of ['gemini', 'qwen-code']) {
+  // an agent not verified never takes one mid-turn: Gemini CLI (interactive shell), aider (interactive commands)...
+  for (const agent of ['gemini', 'aider']) {
     const id = agent === 'gemini' ? JOB3 : JOB4
     await h.skill.command('link-a', 'start_job', start(id, { agent }))
     h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_' + (agent === 'gemini' ? 3 : 4), state: 'working', title: 't', agent, stateStartedAt: 1 }] })
     h.showReply = { agentIdentity: agent, connected: true, writable: true }
     const r = await h.skill.command('link-a', 'send', { job_id: id, text: 'use branch x', enter: true })
     assert.equal(r.error?.code, 'forbidden', agent)
-    assert.match(r.error.message, /command it runs/)
+    assert.match(r.error.message, /does not take a message while it works/)
   }
   assert.equal(sends(), 3)
 })

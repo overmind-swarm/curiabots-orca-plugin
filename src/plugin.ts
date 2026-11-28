@@ -6,7 +6,7 @@ import { resolveEndpoints } from './endpoints.ts'
 import { M } from './methods.ts'
 import type { HostPort } from './host.ts'
 import { logLine } from './host.ts'
-import { JobManager } from './jobs.ts'
+import { JobManager, WORKING_SEND_AGENTS } from './jobs.ts'
 import type { AgentStatusPayload, JobTiming } from './jobs.ts'
 import { LinkConnection } from './link.ts'
 import type { LinkStatus, SocketLike, Timing } from './link.ts'
@@ -175,7 +175,7 @@ export class Plugin {
       platform: this.d.platform,
       helloInfo: async () => {
         const cli = await this.cli.resolve()
-        return { orca_version: cli?.orcaVersion ?? 'unknown', capabilities: cli ? ['send.cli', 'send.working', 'send.working.any'] : [] }
+        return { orca_version: cli?.orcaVersion ?? 'unknown', capabilities: cli ? ['send.cli', 'send.working', ...WORKING_SEND_AGENTS.map((agent) => `send.working:${agent}`)] : [] }
       },
       projectRefs: () => this.projectRefsOf(link.link_id),
       onWelcome: (info) => this.onWelcome(link.link_id, info),

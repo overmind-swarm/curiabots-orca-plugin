@@ -22,11 +22,14 @@ export const DEFAULT_MAX_JOBS_PER_LINK = 5
 const EXCERPT_STATES = new Set<JobState>(['waiting_user', 'idle', 'failed', 'stopped'])
 const ORCA_STATES = new Set(['working', 'blocked', 'waiting', 'done'])
 /**
- * Agents that never take a message mid-turn (contract §1): they pass what is typed to the command they run once the user
- * focuses it (Gemini CLI's interactive shell, on by default, and its fork Qwen Code), so a message could reach a shell.
- * Every other agent takes it as if the user typed it and pressed Enter.
+ * Agents that take a message mid-turn (contract §1), as if the user typed it and pressed Enter: their CLI decides whether
+ * in this turn (Codex, Copilot) or right after (Claude Code, OpenCode). Only verified ones, live on 2026-11-28: their
+ * commands run with no terminal (`tty`: not a tty, stdin /dev/null), so no command reads what is typed, and Orca refuses
+ * Enter on their trust or permission prompts. Not Gemini CLI or Qwen Code: their interactive shell takes typed text once
+ * focused. Others (aider runs commands interactively, for one) stay out until verified. `hello` announces the list.
  */
-export const WORKING_SEND_EXCLUDED = new Set(['gemini', 'qwen-code'])
+export const WORKING_SEND_AGENTS = ['claude', 'codex', 'copilot', 'opencode'] as const
+const WORKING_SEND_SET = new Set<string>(WORKING_SEND_AGENTS)
 
 export interface JobTiming {
   stabilizeMs: number
@@ -410,9 +413,8 @@ export class JobManager {
     const job = own.job
     if (job.phase !== 'running' || !job.terminal_id) return fail('not_found', 'the job is not running')
     // Writing into a user's terminal from the cloud is the delicate operation: prove it is safe.
-    // A question (waiting) or a finished turn (done) takes the text. A turn in progress (working) takes it too, for any
-    // agent: it gets the message as if the user typed it and pressed Enter, and its CLI decides whether it takes it in
-    // this turn (Codex, Copilot) or right after it (Claude Code, OpenCode). Contract §1.
+    // A question (waiting) or a finished turn (done) takes the text. A turn in progress (working) takes it too, for the
+    // verified agents (WORKING_SEND_AGENTS): text and Enter, and their CLI decides this turn or the next. Contract §1.
     // A permission prompt (blocked) never does: only the user resolves it, in Orca.
     const orca = await this.currentOrcaState(job)
     if (orca !== 'waiting' && orca !== 'done' && orca !== 'working') {
@@ -436,9 +438,9 @@ export class JobManager {
       this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_without_enter' })
       return fail('forbidden', 'while the agent works a message is always sent with Enter; nothing was typed')
     }
-    if (orca === 'working' && WORKING_SEND_EXCLUDED.has(String(job.agent ?? '').toLowerCase())) {
-      this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_agent_excluded' })
-      return fail('forbidden', 'this agent may pass typed text to the command it runs; wait until it asks or finishes its turn')
+    if (orca === 'working' && !WORKING_SEND_SET.has(String(job.agent ?? '').toLowerCase())) {
+      this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_agent_unverified' })
+      return fail('forbidden', 'this agent does not take a message while it works; wait until it asks or finishes its turn')
     }
     try {
       const shown = await this.d.cli.show(job.terminal_id)
