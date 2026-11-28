@@ -748,12 +748,24 @@ test('send while the agent works: typed after the same proofs; never on a permis
   assert.match(noEnter.error.message, /always sent with Enter/)
   assert.equal(sends(), 1)
 
-  // only verified agents take a message mid-turn (contract §1): Codex steers, others are unverified
+  // any agent takes a message mid-turn (contract §1), always with Enter: its CLI decides this turn or the next
   await h.skill.command('link-a', 'start_job', start(JOB2, { agent: 'codex' }))
   h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_2', state: 'working', title: 't', agent: 'codex', stateStartedAt: 1 }] })
   h.showReply = { agentIdentity: 'codex', connected: true, writable: true }
   const codex = await h.skill.command('link-a', 'send', { job_id: JOB2, text: 'use branch x', enter: true })
-  assert.equal(codex.error.code, 'forbidden')
-  assert.match(codex.error.message, /not supported/)
-  assert.equal(sends(), 1)
+  assert.equal(codex.ok, true, JSON.stringify(codex))
+  assert.equal(sends(), 2)
+
+  // a prompt Orca sees on screen but has not reported as a state (trust, permission): mid-turn nothing is typed
+  h.showReply = { agentIdentity: 'codex', connected: true, writable: true, agentWait: { source: 'prompt-text', reason: 'agent-interactive-prompt', since: 1 } }
+  const prompt = await h.skill.command('link-a', 'send', { job_id: JOB2, text: 'use branch y', enter: true })
+  assert.equal(prompt.error.code, 'forbidden')
+  assert.match(prompt.error.message, /shows a prompt.*nothing was typed/)
+  assert.equal(sends(), 2)
+
+  // another kind of wait (the title says it is idle) is not a prompt
+  h.showReply = { agentIdentity: 'codex', connected: true, writable: true, agentWait: { source: 'title' } }
+  const titled = await h.skill.command('link-a', 'send', { job_id: JOB2, text: 'use branch z', enter: true })
+  assert.equal(titled.ok, true, JSON.stringify(titled))
+  assert.equal(sends(), 3)
 })

@@ -175,7 +175,7 @@ export class Plugin {
       platform: this.d.platform,
       helloInfo: async () => {
         const cli = await this.cli.resolve()
-        return { orca_version: cli?.orcaVersion ?? 'unknown', capabilities: cli ? ['send.cli', 'send.working'] : [] }
+        return { orca_version: cli?.orcaVersion ?? 'unknown', capabilities: cli ? ['send.cli', 'send.working', 'send.working.any'] : [] }
       },
       projectRefs: () => this.projectRefsOf(link.link_id),
       onWelcome: (info) => this.onWelcome(link.link_id, info),

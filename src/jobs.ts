@@ -21,12 +21,6 @@ import { MAX_PROMPT_BYTES, isCommandName, mapState, validateArgs } from './wire.
 export const DEFAULT_MAX_JOBS_PER_LINK = 5
 const EXCERPT_STATES = new Set<JobState>(['waiting_user', 'idle', 'failed', 'stopped'])
 const ORCA_STATES = new Set(['working', 'blocked', 'waiting', 'done'])
-/**
- * Agents whose turn in progress (`working`) may take a message (contract §1). Only those verified: Claude Code queues
- * what is typed while it works and runs its commands in their own session, with no controlling terminal, so no
- * subprocess of the agent can read the job's terminal. Codex steers (sends at once) and the rest are unverified.
- */
-export const WORKING_SEND_AGENTS = new Set(['claude'])
 
 export interface JobTiming {
   stabilizeMs: number
@@ -410,8 +404,9 @@ export class JobManager {
     const job = own.job
     if (job.phase !== 'running' || !job.terminal_id) return fail('not_found', 'the job is not running')
     // Writing into a user's terminal from the cloud is the delicate operation: prove it is safe.
-    // A question (waiting) or a finished turn (done) takes the text. A turn in progress (working) takes it too:
-    // Claude Code, Codex and the other CLI agents queue what is typed meanwhile and read it when the turn ends.
+    // A question (waiting) or a finished turn (done) takes the text. A turn in progress (working) takes it too, for any
+    // agent: it gets the message as if the user typed it and pressed Enter, and its CLI decides whether it takes it in
+    // this turn (Codex, Copilot) or right after it (Claude Code, OpenCode). Contract §1.
     // A permission prompt (blocked) never does: only the user resolves it, in Orca.
     const orca = await this.currentOrcaState(job)
     if (orca !== 'waiting' && orca !== 'done' && orca !== 'working') {
@@ -435,10 +430,6 @@ export class JobManager {
       this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_without_enter' })
       return fail('forbidden', 'while the agent works a message is always sent with Enter; nothing was typed')
     }
-    if (orca === 'working' && !WORKING_SEND_AGENTS.has(String(job.agent ?? '').toLowerCase())) {
-      this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_agent_unverified' })
-      return fail('forbidden', 'sending while this agent works is not supported; wait until it asks or finishes its turn')
-    }
     try {
       const shown = await this.d.cli.show(job.terminal_id)
       if (shown.agentIdentity?.toLowerCase() !== String(job.agent ?? '').toLowerCase() || !shown.connected || !shown.writable) {
@@ -449,6 +440,11 @@ export class JobManager {
             ? "the terminal is not running the job's agent (it may be running another program), so nothing was typed"
             : "the terminal is not running the job's agent"
         )
+      }
+      // Orca also sees prompts it has not reported as a state yet (a trust or permission dialog): mid-turn, never type.
+      if (orca === 'working' && shown.prompt) {
+        this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'prompt_on_screen' })
+        return fail('forbidden', 'the agent shows a prompt: resolve it in Orca; nothing was typed')
       }
     } catch (error) {
       if (errorCode(error) === 'cli_unavailable') return mapHostError(error)

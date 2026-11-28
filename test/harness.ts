@@ -28,7 +28,7 @@ export interface Harness {
   /** Workspaces `workspace.list` reports; `workspace.create` adds to it. */
   workspaces: Set<string>
   /** `sendFails` makes `orca terminal send` fail like the real CLI: JSON on stdout and a non-zero exit. */
-  showReply: { agentIdentity: string | null; connected: boolean; writable: boolean }
+  showReply: { agentIdentity: string | null; connected: boolean; writable: boolean; agentWait?: unknown }
   /** `orca worktree show`: given the selector, the worktree Orca resolves (null = selector_not_found). */
   worktreeShow: (selector: string) => Record<string, unknown> | null
   /** `orca worktree rm`: what the CLI answers (a JSON failure is thrown like the real non-zero exit). */

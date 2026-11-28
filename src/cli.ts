@@ -91,6 +91,18 @@ export function parseStatus(stdout: string): { ok: boolean; orcaVersion: string 
   }
 }
 
+/** What `orca terminal show` says about a job's terminal. */
+export interface TerminalShown {
+  agentIdentity: string | null
+  connected: boolean
+  writable: boolean
+  /** Orca sees the agent showing a prompt (trust, permission, question): `agentWait.reason` is `agent-interactive-prompt`. */
+  prompt: boolean
+}
+
+const isPromptWait = (wait: unknown): boolean =>
+  typeof wait === 'object' && wait !== null && (wait as { reason?: unknown }).reason === 'agent-interactive-prompt'
+
 export class OrcaCli {
   private cached: CliInfo | null = null
   private checkedAt = 0
@@ -161,7 +173,7 @@ export class OrcaCli {
   }
 
   /** `orca terminal show`: what the runtime knows about a terminal. Throws `cli_unavailable` or `internal`. */
-  async show(terminalId: string): Promise<{ agentIdentity: string | null; connected: boolean; writable: boolean }> {
+  async show(terminalId: string): Promise<TerminalShown> {
     if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(terminalId)) throw cliError('internal', 'bad terminal id')
     let info = await this.resolve()
     if (!info) info = await this.resolve(true)
@@ -173,7 +185,8 @@ export class OrcaCli {
       return {
         agentIdentity: typeof t.agentIdentity === 'string' ? t.agentIdentity : null,
         connected: t.connected === true,
-        writable: t.writable === true
+        writable: t.writable === true,
+        prompt: isPromptWait(t.agentWait)
       }
     } catch (error) {
       const e = error as { stdout?: unknown; stderr?: unknown; code?: string }
