@@ -21,6 +21,12 @@ import { MAX_PROMPT_BYTES, isCommandName, mapState, validateArgs } from './wire.
 export const DEFAULT_MAX_JOBS_PER_LINK = 5
 const EXCERPT_STATES = new Set<JobState>(['waiting_user', 'idle', 'failed', 'stopped'])
 const ORCA_STATES = new Set(['working', 'blocked', 'waiting', 'done'])
+/**
+ * Agents that never take a message mid-turn (contract §1): they pass what is typed to the command they run once the user
+ * focuses it (Gemini CLI's interactive shell, on by default, and its fork Qwen Code), so a message could reach a shell.
+ * Every other agent takes it as if the user typed it and pressed Enter.
+ */
+export const WORKING_SEND_EXCLUDED = new Set(['gemini', 'qwen-code'])
 
 export interface JobTiming {
   stabilizeMs: number
@@ -429,6 +435,10 @@ export class JobManager {
       // typed into a permission prompt drawn after the last check, and a digit there approves it.
       this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_without_enter' })
       return fail('forbidden', 'while the agent works a message is always sent with Enter; nothing was typed')
+    }
+    if (orca === 'working' && WORKING_SEND_EXCLUDED.has(String(job.agent ?? '').toLowerCase())) {
+      this.log('send.refused', { link_id: linkId, job_id: job.job_id, reason: 'working_agent_excluded' })
+      return fail('forbidden', 'this agent may pass typed text to the command it runs; wait until it asks or finishes its turn')
     }
     try {
       const shown = await this.d.cli.show(job.terminal_id)

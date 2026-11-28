@@ -11,6 +11,7 @@ afterEach(async () => h?.stop())
 const JOB1 = '11111111-1111-4111-8111-111111111111'
 const JOB2 = '22222222-2222-4222-8222-222222222222'
 const JOB3 = '33333333-3333-4333-8333-333333333333'
+const JOB4 = '44444444-4444-4444-8444-444444444444'
 const start = (job_id: string, extra: Record<string, unknown> = {}) => ({
   job_id,
   project_id: 'p1',
@@ -767,5 +768,17 @@ test('send while the agent works: typed after the same proofs; never on a permis
   h.showReply = { agentIdentity: 'codex', connected: true, writable: true, agentWait: { source: 'title' } }
   const titled = await h.skill.command('link-a', 'send', { job_id: JOB2, text: 'use branch z', enter: true })
   assert.equal(titled.ok, true, JSON.stringify(titled))
+  assert.equal(sends(), 3)
+
+  // Gemini CLI and Qwen Code pass typing to a focused interactive shell: never mid-turn
+  for (const agent of ['gemini', 'qwen-code']) {
+    const id = agent === 'gemini' ? JOB3 : JOB4
+    await h.skill.command('link-a', 'start_job', start(id, { agent }))
+    h.host.handlers['agents.list'] = () => ({ agents: [{ terminalId: 'term_' + (agent === 'gemini' ? 3 : 4), state: 'working', title: 't', agent, stateStartedAt: 1 }] })
+    h.showReply = { agentIdentity: agent, connected: true, writable: true }
+    const r = await h.skill.command('link-a', 'send', { job_id: id, text: 'use branch x', enter: true })
+    assert.equal(r.error?.code, 'forbidden', agent)
+    assert.match(r.error.message, /command it runs/)
+  }
   assert.equal(sends(), 3)
 })
